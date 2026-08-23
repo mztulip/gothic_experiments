@@ -63,3 +63,19 @@ lensflare_fx :
 
 ==========================================
 Found  4 lights (zCVobLight).
+
+./list_lights_all ../TOTENINSEL.ZEN 
+world,preset,vob_name,pos_x,pos_y,pos_z,type,range,r,g,b,a,is_static,quality,on,color_anim_frames,range_anim_frames,anim_luma_min,anim_luma_max,color_anim_frames_rgb
+Wczytuje ../TOTENINSEL.ZEN...
+"TOTENINSEL.ZEN","FIRESMALL","",-3268.76,397.148,369.186,POINT,250,252,176,50,255,0,2,1,3,1,468,552,"254,216,82|252,177,39|255,174,94"
+"TOTENINSEL.ZEN","FIRESMALL","",-1479.59,148.054,-408.773,POINT,350,208,109,9,255,0,2,1,5,1,188,453,"251,125,0|179,89,0|125,63,0|196,98,0|255,151,47"
+"TOTENINSEL.ZEN","FIRESMALL","",-3240.04,754.721,458.061,POINT,150,255,105,0,255,0,2,1,3,1,355,383,"255,128,0|255,100,0|255,128,0"
+"TOTENINSEL.ZEN","FIRESMALL","",-2777.89,447.999,233.445,POINT,150,255,105,0,255,0,2,1,3,1,355,383,"255,128,0|255,100,0|255,128,0"
+
+==========================================
+Wczytano swiatow: 1
+Razem swiatel:    4
+
+Podsumowanie per-preset (posortowane wg liczby wystapien):
+preset;count;static;range_min;range_max;range_avg
+FIRESMALL;4;0;150;350;225
