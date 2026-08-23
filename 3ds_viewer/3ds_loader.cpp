@@ -22,6 +22,13 @@
 
 namespace fs = std::filesystem;
 
+enum RenderMode
+{
+    RENDER_TEXTURED = 0,
+    RENDER_SOLID_COLOR = 1,
+    RENDER_WIREFRAME = 2
+};
+
 struct Vertex
 {
     glm::vec3 pos;
@@ -61,8 +68,6 @@ public:
         file.seekg(0, std::ios::beg);
 
         parseChunk(file, fileSize, outMesh);
-
-        // Automatyczne generowanie wektorów normalnych dla oświetlenia
         calculateNormals(outMesh);
 
         return !outMesh.vertices.empty();
@@ -215,9 +220,9 @@ static std::vector<std::string> g_fileList;
 static size_t g_currentFileIdx = 0;
 static bool g_needMeshReload = false;
 
-static bool g_wireframeMode = false;
+static RenderMode g_renderMode = RENDER_TEXTURED;
 static bool g_showHUD = true;
-static bool g_enableLighting = true; // Flaga oświetlenia
+static bool g_enableLighting = true;
 
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 {
@@ -288,9 +293,14 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
 
-        if (key == GLFW_KEY_M) g_wireframeMode = !g_wireframeMode;
+        // Klawisz M przełącza w pętli: Textured -> Solid Color -> Wireframe
+        if (key == GLFW_KEY_M)
+        {
+            g_renderMode = static_cast<RenderMode>((static_cast<int>(g_renderMode) + 1) % 3);
+        }
+
         if (key == GLFW_KEY_T) g_showHUD = !g_showHUD;
-        if (key == GLFW_KEY_L) g_enableLighting = !g_enableLighting; // Klawisz L pręzełącza oświetlenie
+        if (key == GLFW_KEY_L) g_enableLighting = !g_enableLighting;
 
         if (!g_fileList.empty())
         {
@@ -364,7 +374,6 @@ Texture2D createFallbackTexture()
     return tex;
 }
 
-// Shader z wyliczaniem światła Lambertian / Diffuse
 static const char* MESH_VERT_SRC = R"GLSL(
 #version 330 core
 layout (location = 0) in vec3 aPos;
@@ -395,22 +404,28 @@ in vec3 FragNormal;
 in vec3 FragPos;
 
 uniform sampler2D uTexture;
-uniform bool uUseTexture;
+uniform int uRenderMode; // 0: Texture, 1: Solid Color, 2: Wireframe
 uniform bool uEnableLighting;
 uniform vec3 uLightPos;
 
 void main() {
-    vec4 baseColor = uUseTexture ? texture(uTexture, TexCoord) : vec4(0.0, 0.8, 1.0, 1.0);
+    vec4 baseColor;
 
-    if (uEnableLighting) {
+    if (uRenderMode == 0) {
+        baseColor = texture(uTexture, TexCoord);
+    } else if (uRenderMode == 1) {
+        baseColor = vec4(0.7, 0.7, 0.75, 1.0); // Szary, jednolity kolor matowy
+    } else {
+        baseColor = vec4(0.0, 0.8, 1.0, 1.0);  // Kolor linii siatki
+    }
+
+    if (uEnableLighting && uRenderMode != 2) {
         vec3 norm = normalize(FragNormal);
         vec3 lightDir = normalize(uLightPos - FragPos);
         
-        // Swiatlo otoczenia (Ambient)
-        float ambientStrength = 0.35;
+        float ambientStrength = 0.3;
         vec3 ambient = ambientStrength * vec3(1.0);
 
-        // Swiatlo rozproszone (Diffuse)
         float diff = max(dot(norm, lightDir), 0.0);
         vec3 diffuse = diff * vec3(0.85);
 
@@ -508,15 +523,12 @@ int main(int argc, char** argv)
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshEBO);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.faces.size() * sizeof(Face), mesh.faces.data(), GL_STATIC_DRAW);
 
-            // 0: Position
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
             glEnableVertexAttribArray(0);
 
-            // 1: UV
             glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
             glEnableVertexAttribArray(1);
 
-            // 2: Normal
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
             glEnableVertexAttribArray(2);
 
@@ -672,8 +684,16 @@ int main(int argc, char** argv)
                 ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.0f, 1.0f), "[%d/%d] %s", 
                                    (int)(g_currentFileIdx + 1), (int)g_fileList.size(), filename.c_str());
                 ImGui::Separator();
+
+                // Przełącznik trybów w HUD
+                const char* modeNames[] = { "Tekstura (Textured)", "Jednolity kolor (Solid)", "Siatka (Wireframe)" };
+                int currentModeInt = static_cast<int>(g_renderMode);
+                if (ImGui::Combo("Tryb widoku (M)", &currentModeInt, modeNames, IM_ARRAYSIZE(modeNames)))
+                {
+                    g_renderMode = static_cast<RenderMode>(currentModeInt);
+                }
+
                 ImGui::Checkbox("Oswietlenie Scene (L)", &g_enableLighting);
-                ImGui::Checkbox("Siatka / Wireframe (M)", &g_wireframeMode);
                 ImGui::Checkbox("Pokaz HUD (T)", &g_showHUD);
                 ImGui::Separator();
                 ImGui::Text("ESC / Q: Wyjscie");
@@ -684,14 +704,14 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
-        // Renderowanie scene
+        // Renderowanie scene 3D
         glViewport(0, 0, width, height);
         glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glEnable(GL_DEPTH_TEST);
 
-        if (g_wireframeMode)
+        if (g_renderMode == RENDER_WIREFRAME)
         {
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         }
@@ -715,18 +735,17 @@ int main(int argc, char** argv)
         glm::mat4 proj  = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.5f, 100000.0f);
         glm::mat4 MVP   = proj * view * model;
 
-        // Światło podąża nieco wyżej nad kamerą
         glm::vec3 lightPos = camPos + glm::vec3(0.0f, g_distance * 0.5f, 0.0f);
 
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "MVP"), 1, GL_FALSE, glm::value_ptr(MVP));
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "Model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniform3fv(glGetUniformLocation(meshProgram, "uLightPos"), 1, glm::value_ptr(lightPos));
         glUniform1i(glGetUniformLocation(meshProgram, "uEnableLighting"), g_enableLighting);
+        glUniform1i(glGetUniformLocation(meshProgram, "uRenderMode"), static_cast<int>(g_renderMode));
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, activeTex.id);
         glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
-        glUniform1i(glGetUniformLocation(meshProgram, "uUseTexture"), !g_wireframeMode);
 
         if (!mesh.faces.empty())
         {
