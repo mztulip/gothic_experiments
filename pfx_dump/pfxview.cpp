@@ -748,7 +748,8 @@ int main(int argc, char** argv)
 
     // --- NAWIGACJA STRZAŁKAMI ---
     // Obsługa zmiana efektu za pomocą strzałek (jeśli fokus nie jest w polu edycji tekstu)
-    if (!ImGui::GetIO().WantCaptureKeyboard && !filteredNames.empty())
+    bool selectionChangedByKeys = false;
+    if (!ImGui::GetIO().WantTextInput && !filteredNames.empty())
     {
       int currentIndex = -1;
       for (size_t i = 0; i < filteredNames.size(); ++i)
@@ -761,11 +762,11 @@ int main(int argc, char** argv)
       }
 
       int newIndex = currentIndex;
-      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
       {
         newIndex = (currentIndex <= 0) ? static_cast<int>(filteredNames.size()) - 1 : currentIndex - 1;
       }
-      else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+      else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
       {
         newIndex = (currentIndex < 0 || currentIndex >= static_cast<int>(filteredNames.size()) - 1) ? 0 : currentIndex + 1;
       }
@@ -774,8 +775,10 @@ int main(int argc, char** argv)
       {
         selectedName = filteredNames[newIndex];
         loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPath);
+        selectionChangedByKeys = true;
       }
     }
+
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(320,800), ImGuiCond_FirstUseEver);
@@ -808,8 +811,7 @@ int main(int argc, char** argv)
     }
 
     ImGui::Separator();
-    ImGui::BeginChild("lista_efektow");
-    
+ImGui::BeginChild("lista_efektow");
     for(const auto& n : filteredNames)
     {
       bool isSelected = (n == selectedName);
@@ -822,13 +824,54 @@ int main(int argc, char** argv)
         }
       }
 
-      // Automatyczny scroll w liście ImGui do aktualnie wybranego elementu przy nawigacji klawiaturą
-      if (isSelected)
+      // Przewijaj widok do zaznaczonego elementu TYLKO wtedy, gdy zmiana nastąpiła klawiaturą
+      if (isSelected && selectionChangedByKeys)
       {
-        ImGui::SetScrollHereY();
+        ImGui::SetScrollHereY(0.5f);
       }
     }
     ImGui::EndChild();
+    ImGui::End();
+
+    // --- OKNO INFORMACJI O EFEKCIE ---
+    ImGui::SetNextWindowPos(ImVec2(330, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(350, 320), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Informacje o Efekcie");
+
+    if (!selectedName.empty())
+    {
+        ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "Instancja: %s", selectedName.c_str());
+        ImGui::Separator();
+
+        ImGui::Text("Tekstura (visName): %s", currentParams.visName.empty() ? "(brak)" : currentParams.visName.c_str());
+        ImGui::Text("Emisja (ppsValue): %.2f", currentParams.ppsValue);
+        
+        ImGui::Separator();
+        ImGui::Text("Ksztalt (shpType): %s", currentParams.shpType.c_str());
+        ImGui::Text("Wymiary ksztaltu:  (%.1f, %.1f, %.1f)", currentParams.shpDim.x, currentParams.shpDim.y, currentParams.shpDim.z);
+        ImGui::Text("Objetosc (Volume): %s", currentParams.shpIsVolume ? "TAK" : "NIE");
+
+        ImGui::Separator();
+        ImGui::Text("Predkosc (velAvg +- var): %.1f (+-%.1f)", currentParams.velAvg, currentParams.velVar);
+        ImGui::Text("Czas zycia (lspAvg +- var): %.0f ms (+-%.0f ms)", currentParams.lspAvg, currentParams.lspVar);
+        
+        ImGui::Separator();
+        ImGui::Text("Grawitacja: (%.1f, %.1f, %.1f)", currentParams.gravity.x, currentParams.gravity.y, currentParams.gravity.z);
+        ImGui::Text("Rozmiar startowy: (%.1f, %.1f)", currentParams.sizeStart.x, currentParams.sizeStart.y);
+        ImGui::Text("Skala rozmiaru konca: %.2f", currentParams.sizeEndScale);
+
+        // Podgląd podpiętej tekstury w ImGui jeśli istnieje
+        if (currentTexture.valid && currentTexture.id != 0)
+        {
+            ImGui::Separator();
+            ImGui::Text("Podglad tekstury:");
+            ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(64, 64));
+        }
+    }
+    else
+    {
+        ImGui::TextDisabled("Wybierz efekt z listy po lewej stronie.");
+    }
     ImGui::End();
 
     if(!ImGui::GetIO().WantCaptureKeyboard)
@@ -849,14 +892,32 @@ int main(int argc, char** argv)
       g_resetRequested = false;
     }
 
-    if(!selectedName.empty() && currentParams.ppsValue>0.f)
+    // --- LOGIKA OBSŁUGI EFEKTÓW (CIĄGŁYCH ORAZ JEDNORAZOWYCH) ---
+    if (!selectedName.empty())
     {
-      spawnAccum += currentParams.ppsValue*dt;
-      while(spawnAccum>=1.f && particles.size()<MAX_PARTICLES)
-      {
-        spawnParticle(currentParams, particles);
-        spawnAccum -= 1.f;
-      }
+        if (currentParams.ppsValue > 0.f)
+        {
+            // Efekty ciągłe (Continuous)
+            spawnAccum += currentParams.ppsValue * dt;
+            while (spawnAccum >= 1.f && particles.size() < MAX_PARTICLES)
+            {
+                spawnParticle(currentParams, particles);
+                spawnAccum -= 1.f;
+            }
+        }
+        else
+        {
+            // Efekty jednorazowe (Burst / One-shot) - np. FIRE_ARROW
+            // Gdy wszystkie cząsteczki znikną, generujemy nową serię
+            if (particles.empty())
+            {
+                int burstCount = 30; // Domyślna pula cząsteczek dla pojedynczego wystrzału
+                for (int i = 0; i < burstCount && particles.size() < MAX_PARTICLES; ++i)
+                {
+                    spawnParticle(currentParams, particles);
+                }
+            }
+        }
     }
 
     for(size_t i=0;i<particles.size();)
