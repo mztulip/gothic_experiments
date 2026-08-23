@@ -111,17 +111,52 @@ private:
 // ---------------------------------------------------------------------
 static float g_yaw = 0.0f;
 static float g_pitch = 15.0f;
-static float g_distance = 200.0f; // Dynamiczna odległość kamery
+static float g_distance = 200.0f;
 static bool g_keys[512] = {};
 static double g_lastInteractionTime = 0.0;
+
+// Stan myszy
+static bool g_isMouseDown = false;
+static double g_lastMouseX = 0.0;
+static double g_lastMouseY = 0.0;
 
 static std::vector<std::string> g_fileList;
 static size_t g_currentFileIdx = 0;
 static bool g_needMeshReload = false;
 
+// Obsługa przycisków myszy
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            g_isMouseDown = true;
+            glfwGetCursorPos(window, &g_lastMouseX, &g_lastMouseY);
+            g_lastInteractionTime = glfwGetTime();
+        } else if (action == GLFW_RELEASE) {
+            g_isMouseDown = false;
+            g_lastInteractionTime = glfwGetTime();
+        }
+    }
+}
+
+// Obsługa ruchu myszy
+static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (g_isMouseDown) {
+        float dx = static_cast<float>(xpos - g_lastMouseX);
+        float dy = static_cast<float>(ypos - g_lastMouseY);
+
+        float sensitivity = 0.3f;
+        g_yaw += dx * sensitivity;
+        g_pitch -= dy * sensitivity; // Odwrócona oś Y dla intuicyjnego obrotu
+
+        g_lastMouseX = xpos;
+        g_lastMouseY = ypos;
+        g_lastInteractionTime = glfwGetTime();
+    }
+}
+
 // Obsługa rolki myszy (zoom)
 static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
-    g_distance -= static_cast<float>(yoffset) * (g_distance * 0.1f); // Proporcjonalne przybliżanie
+    g_distance -= static_cast<float>(yoffset) * (g_distance * 0.1f);
     g_distance = std::clamp(g_distance, 1.0f, 50000.0f);
     g_lastInteractionTime = glfwGetTime();
 }
@@ -317,7 +352,9 @@ int main(int argc, char** argv) {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetKeyCallback(window, keyCallback);
-    glfwSetScrollCallback(window, scrollCallback); // Podpięcie rolki myszy
+    glfwSetScrollCallback(window, scrollCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetCursorPosCallback(window, cursorPosCallback);
 
     GLuint meshVAO, meshVBO, meshEBO;
     glGenVertexArrays(1, &meshVAO);
@@ -380,7 +417,8 @@ int main(int argc, char** argv) {
 
         g_distance = std::clamp(g_distance, 1.0f, 50000.0f);
 
-        bool userActive = g_keys[GLFW_KEY_LEFT] || g_keys[GLFW_KEY_RIGHT] || 
+        bool userActive = g_isMouseDown ||
+                          g_keys[GLFW_KEY_LEFT] || g_keys[GLFW_KEY_RIGHT] || 
                           g_keys[GLFW_KEY_UP]   || g_keys[GLFW_KEY_DOWN]  ||
                           g_keys[GLFW_KEY_W]    || g_keys[GLFW_KEY_S]     ||
                           g_keys[GLFW_KEY_EQUAL]|| g_keys[GLFW_KEY_MINUS];
@@ -413,7 +451,6 @@ int main(int argc, char** argv) {
 
         glm::mat4 model = glm::mat4(1.0f);
         glm::mat4 view  = glm::lookAt(camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        // Zwiększony z clipping plane (do 100,000) na wypadek ogromnych map
         glm::mat4 proj  = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.5f, 100000.0f);
         glm::mat4 MVP   = proj * view * model;
 
@@ -429,7 +466,7 @@ int main(int argc, char** argv) {
 
         std::string filename = fs::path(g_fileList[g_currentFileIdx]).filename().string();
         std::string infoText = "[" + std::to_string(g_currentFileIdx + 1) + "/" + std::to_string(g_fileList.size()) + "] " + filename;
-        std::string controlsText = "N/P: Zmiana pliku | Strzalki: Kamera | Rolka/W/S/+/-: Zoom (" + std::to_string(static_cast<int>(g_distance)) + ")";
+        std::string controlsText = "N/P: Zmiana pliku | LPM + Przeciagnij / Strzalki: Kamera | Zoom: Rolka/W/S";
 
         renderText(textVAO, textVBO, textProgram, infoText, 20.0f, 20.0f, 2.0f, width, height);
         renderText(textVAO, textVBO, textProgram, controlsText, 20.0f, 50.0f, 1.5f, width, height);
