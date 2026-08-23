@@ -2,11 +2,11 @@
 set -e
 
 # Pliki zrodlowe ImGui
-IMGUI_SRC="imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp"
-IMGUI_BACKENDS="imgui/backends/imgui_impl_glfw.cpp imgui/backends/imgui_impl_opengl3.cpp"
+IMGUI_SRC="../imgui/imgui.cpp ../imgui/imgui_draw.cpp ../imgui/imgui_tables.cpp ../imgui/imgui_widgets.cpp"
+IMGUI_BACKENDS="../imgui/backends/imgui_impl_glfw.cpp ../imgui/backends/imgui_impl_opengl3.cpp"
 
 LIBS="-lglfw -lepoxy -lGL -ldl -lpthread"
-INCLUDES="-I imgui -I imgui/backends"
+INCLUDES="-I ../imgui -I ../imgui/backends"
 
 echo "=== 1/2 Kompilacja Gothic 3DS Viewer ==="
 g++ -std=c++17 3ds_loader.cpp $IMGUI_SRC $IMGUI_BACKENDS -o viewer3ds $INCLUDES $LIBS

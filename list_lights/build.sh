@@ -60,6 +60,22 @@ fi
     "$SQUISH_LIB" \
     -o "$SCRIPT_DIR/list_lights_all"
 
+
+IMGUI_SRC="../imgui/imgui.cpp ../imgui/imgui_draw.cpp ../imgui/imgui_tables.cpp ../imgui/imgui_widgets.cpp"
+IMGUI_BACKENDS="../imgui/backends/imgui_impl_glfw.cpp ../imgui/backends/imgui_impl_opengl3.cpp"
+LIBS="-lglfw -lepoxy -lGL -ldl -lpthread"
+INCLUDES="-I ../imgui -I ../imgui/backends"
+
+"$CXX" -std=c++20 lights_tester.cpp \
+  -std=c++20 \
+  -I"$ZENKIT_DIR/include" \
+  -I"$ZENKIT_DIR/vendor/glm" \
+  "$ZENKIT_LIB" \
+  "$SQUISH_LIB" \
+  $IMGUI_SRC $IMGUI_BACKENDS \
+  -o zen_light_tester \
+  $INCLUDES $LIBS
+
 echo
 echo "=========================================="
 echo " Build successful"
