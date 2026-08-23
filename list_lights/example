@@ -1,0 +1,65 @@
+./list_lights  ../TOTENINSEL.ZEN 
+Found 1 vobs highest level.
+----------------------------------------
+vob_name     : 
+preset       : FIRESMALL
+position     : (-3268.76, 397.148, 369.186)
+type         : POINT
+range        : 250
+color(RGBA)  : (252, 176, 50, 255)
+cone_angle   : 0
+is_static    : false
+quality      : LOW
+on (dynamic) : true
+can_move     : false
+range_anim   : 1 frames, fps=4, smooth=1
+color_anim   : 3 frames, fps=2, smooth=1
+lensflare_fx : 
+----------------------------------------
+vob_name     : 
+preset       : FIRESMALL
+position     : (-1479.59, 148.054, -408.773)
+type         : POINT
+range        : 350
+color(RGBA)  : (208, 109, 9, 255)
+cone_angle   : 0
+is_static    : false
+quality      : LOW
+on (dynamic) : true
+can_move     : false
+range_anim   : 1 frames, fps=4, smooth=1
+color_anim   : 5 frames, fps=2, smooth=1
+lensflare_fx : 
+----------------------------------------
+vob_name     : 
+preset       : FIRESMALL
+position     : (-3240.04, 754.721, 458.061)
+type         : POINT
+range        : 150
+color(RGBA)  : (255, 105, 0, 255)
+cone_angle   : 0
+is_static    : false
+quality      : LOW
+on (dynamic) : true
+can_move     : false
+range_anim   : 1 frames, fps=4, smooth=1
+color_anim   : 3 frames, fps=2, smooth=1
+lensflare_fx : 
+----------------------------------------
+vob_name     : 
+preset       : FIRESMALL
+position     : (-2777.89, 447.999, 233.445)
+type         : POINT
+range        : 150
+color(RGBA)  : (255, 105, 0, 255)
+cone_angle   : 0
+is_static    : false
+quality      : LOW
+on (dynamic) : true
+can_move     : false
+range_anim   : 1 frames, fps=4, smooth=1
+color_anim   : 3 frames, fps=2, smooth=1
+lensflare_fx : 
+
+==========================================
+Found  4 lights (zCVobLight).
