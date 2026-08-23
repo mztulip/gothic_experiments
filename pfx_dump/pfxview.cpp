@@ -34,7 +34,7 @@
 namespace fs = std::filesystem;
 
 /* ---------------------------------------------------------------------
-   Pomocnicze funkcje tekstowe
+   Pomocnicze funkcja tekstowe
    --------------------------------------------------------------------- */
 
 static bool containsIgnoreCase(const std::string& str, const std::string& subStr)
@@ -347,7 +347,7 @@ static float estimateEffectRadius(const PfxParams& p)
   float gravityDrop   = 0.5f * glm::length(p.gravity) * lifeSec * lifeSec;
 
   float radius = shapeExtent + travel + gravityDrop;
-  return std::max(radius, 15.f);
+  return std::max(radius, 50.f);
 }
 
 static void spawnParticle(const PfxParams& p, std::vector<LiveParticle>& particles)
@@ -381,7 +381,7 @@ void main() {
   gl_Position = uProj * viewPos;
 
   float dist = length(viewPos.xyz);
-  gl_PointSize = clamp(aSize * (300.0/max(dist,1.0)), 1.0, 96.0);
+  gl_PointSize = clamp(aSize * (600.0/max(dist,1.0)), 1.0, 256.0);
 
   vColorAlpha = aColorAlpha;
 }
@@ -459,24 +459,43 @@ static GLuint linkProgram(GLuint vs, GLuint fs)
 }
 
 /* ---------------------------------------------------------------------
-   Kamera
+   Kamera Orbitująca (Z dystansem zamiast modyfikacji FOV)
    --------------------------------------------------------------------- */
 struct Camera
 {
-  glm::vec3 pos   = {0.f, 80.f, 300.f};
-  float     yaw   = -90.f;
-  float     pitch = -10.f;
-  float     speed = 200.f;
+  glm::vec3 targetPos = {0.f, 0.f, 0.f};
+  float     distance  = 300.f;
+  float     yaw       = -90.f;
+  float     pitch     = 15.f;
+  float     speed     = 300.f;
+
+  glm::vec3 getPosition() const
+  {
+    float radYaw   = glm::radians(yaw);
+    float radPitch = glm::radians(pitch);
+
+    glm::vec3 dir;
+    dir.x = std::cos(radYaw) * std::cos(radPitch);
+    dir.y = std::sin(radPitch);
+    dir.z = std::sin(radYaw) * std::cos(radPitch);
+
+    return targetPos - dir * distance;
+  }
 
   glm::vec3 front() const
   {
-    return glm::normalize(glm::vec3(
-      cos(glm::radians(yaw))*cos(glm::radians(pitch)),
-      sin(glm::radians(pitch)),
-      sin(glm::radians(yaw))*cos(glm::radians(pitch))));
+    return glm::normalize(targetPos - getPosition());
   }
-  glm::vec3 right() const { return glm::normalize(glm::cross(front(), {0,1,0})); }
-  glm::mat4 view() const { return glm::lookAt(pos, pos+front(), glm::vec3(0,1,0)); }
+
+  glm::vec3 right() const
+  {
+    return glm::normalize(glm::cross(front(), glm::vec3(0, 1, 0)));
+  }
+
+  glm::mat4 view() const
+  {
+    return glm::lookAt(getPosition(), targetPos, glm::vec3(0, 1, 0));
+  }
 };
 
 static Camera g_cam;
@@ -485,35 +504,32 @@ static double g_lastX = 400, g_lastY = 300;
 static bool   g_firstMouse = true;
 static bool   g_lookActive = false;
 static bool   g_resetRequested = false;
-static float  g_fov = 70.f;
+static const float FIXED_FOV = 60.f; // Stałe, naturalne pole widzenia
 
 static void scrollCallback(GLFWwindow*, double, double yoffset)
 {
   if(ImGui::GetIO().WantCaptureMouse)
     return;
-  g_fov -= float(yoffset)*3.f;
-  g_fov = std::clamp(g_fov, 15.f, 100.f);
+
+  // Pravdziwy zoom: Fizyczna zmiana odległości kamery od obiektu!
+  float zoomFactor = 1.15f;
+  if(yoffset > 0)
+    g_cam.distance /= zoomFactor;
+  else if(yoffset < 0)
+    g_cam.distance *= zoomFactor;
+
+  // Zakres od bardzo bliskiego podglądu do dystansu dla ogromnych efektów
+  g_cam.distance = std::clamp(g_cam.distance, 5.f, 50000.f);
 }
 
 static void reframeCameraToEffect(const PfxParams& p)
 {
   float radius = estimateEffectRadius(p);
-  glm::vec3 center = p.shpOffset + baseDirection(p)*radius*0.4f;
+  g_cam.targetPos = p.shpOffset + baseDirection(p) * (radius * 0.2f);
 
-  float distance = radius / std::tan(glm::radians(g_fov*0.5f));
-  distance *= 1.5f;
-  distance = std::clamp(distance, 60.f, 4000.f);
-
-  glm::vec3 dirFromCenter = g_cam.pos - center;
-  if(glm::length(dirFromCenter) < 1e-3f)
-    dirFromCenter = glm::vec3(0.3f, 0.4f, 1.f);
-  dirFromCenter = glm::normalize(dirFromCenter);
-
-  g_cam.pos = center + dirFromCenter*distance;
-
-  glm::vec3 lookDir = glm::normalize(center - g_cam.pos);
-  g_cam.pitch = glm::degrees(std::asin(std::clamp(lookDir.y, -1.f, 1.f)));
-  g_cam.yaw   = glm::degrees(std::atan2(lookDir.z, lookDir.x));
+  // Ustalamy odległość na podstawie estymowanego promienia tak, aby cały efekt był w kadru
+  g_cam.distance = radius * 2.5f;
+  g_cam.distance = std::clamp(g_cam.distance, 20.f, 30000.f);
 }
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
@@ -551,13 +567,12 @@ static void cursorCallback(GLFWwindow*, double x, double y)
   if(g_firstMouse) { g_lastX=x; g_lastY=y; g_firstMouse=false; }
   double dx = x-g_lastX, dy = g_lastY-y;
   g_lastX=x; g_lastY=y;
-  const float sens = 0.12f;
+  const float sens = 0.15f;
   g_cam.yaw   += float(dx)*sens;
   g_cam.pitch += float(dy)*sens;
   g_cam.pitch  = std::clamp(g_cam.pitch, -89.f, 89.f);
 }
 
-// Funkcja pomocnicza ładowania efektu
 static void loadSelectedEffect(const std::string& name, const ParticleLibrary& lib, PfxParams& currentParams, 
                                 std::vector<LiveParticle>& particles, float& spawnAccum, bool autoZoom, 
                                 Texture2D& currentTexture, const std::string& datPath)
@@ -675,7 +690,7 @@ int main(int argc, char** argv)
   GLuint floorProg = linkProgram(fvs, ffs);
   glDeleteShader(fvs); glDeleteShader(ffs);
 
-  float R = 500.f;
+  float R = 2000.f;
   float floorVerts[] = {
     -R,0,-R,  R,0,-R,  R,0,R,
     -R,0,-R,  R,0,R,  -R,0,R,
@@ -737,7 +752,6 @@ int main(int argc, char** argv)
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // Przygotowanie przefiltrowanej listy efektów do wyświetlenia i nawigacji
     std::string searchFilter(searchBuffer);
     std::vector<std::string> filteredNames;
     for (const auto& name : lib.names())
@@ -746,8 +760,7 @@ int main(int argc, char** argv)
         filteredNames.push_back(name);
     }
 
-    // --- NAWIGACJA STRZAŁKAMI ---
-    // Obsługa zmiana efektu za pomocą strzałek (jeśli fokus nie jest w polu edycji tekstu)
+    // --- NAWIGACJA STRZAŁKAMI (BEZ BLOKOWANIA SUWAKA) ---
     bool selectionChangedByKeys = false;
     if (!ImGui::GetIO().WantTextInput && !filteredNames.empty())
     {
@@ -779,12 +792,11 @@ int main(int argc, char** argv)
       }
     }
 
-
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(320,800), ImGuiCond_FirstUseEver);
     ImGui::Begin("Efekty czasteczkowe");
     ImGui::Text("Znaleziono: %zu", lib.names().size());
-    ImGui::Text("Zoom (FOV): %.1f st.  (kolko myszy)", g_fov);
+    ImGui::Text("Dystans kamery: %.0f (kolko)", g_cam.distance);
     ImGui::Checkbox("Automatyczny zoom do efektu", &autoZoom);
     if(!selectedName.empty())
     {
@@ -797,7 +809,6 @@ int main(int argc, char** argv)
     }
     ImGui::Separator();
 
-    // Szukajka
     ImGui::InputText("##szukaj", searchBuffer, IM_ARRAYSIZE(searchBuffer));
     ImGui::SameLine();
     if(ImGui::Button("X"))
@@ -811,7 +822,8 @@ int main(int argc, char** argv)
     }
 
     ImGui::Separator();
-ImGui::BeginChild("lista_efektow");
+    ImGui::BeginChild("lista_efektow");
+    
     for(const auto& n : filteredNames)
     {
       bool isSelected = (n == selectedName);
@@ -824,7 +836,6 @@ ImGui::BeginChild("lista_efektow");
         }
       }
 
-      // Przewijaj widok do zaznaczonego elementu TYLKO wtedy, gdy zmiana nastąpiła klawiaturą
       if (isSelected && selectionChangedByKeys)
       {
         ImGui::SetScrollHereY(0.5f);
@@ -860,7 +871,6 @@ ImGui::BeginChild("lista_efektow");
         ImGui::Text("Rozmiar startowy: (%.1f, %.1f)", currentParams.sizeStart.x, currentParams.sizeStart.y);
         ImGui::Text("Skala rozmiaru konca: %.2f", currentParams.sizeEndScale);
 
-        // Podgląd podpiętej tekstury w ImGui jeśli istnieje
         if (currentTexture.valid && currentTexture.id != 0)
         {
             ImGui::Separator();
@@ -877,12 +887,12 @@ ImGui::BeginChild("lista_efektow");
     if(!ImGui::GetIO().WantCaptureKeyboard)
     {
       float speed = g_cam.speed * dt * (g_keys[GLFW_KEY_LEFT_SHIFT] ? 3.f : 1.f);
-      if(g_keys[GLFW_KEY_W]) g_cam.pos += g_cam.front()*speed;
-      if(g_keys[GLFW_KEY_S]) g_cam.pos -= g_cam.front()*speed;
-      if(g_keys[GLFW_KEY_A]) g_cam.pos -= g_cam.right()*speed;
-      if(g_keys[GLFW_KEY_D]) g_cam.pos += g_cam.right()*speed;
-      if(g_keys[GLFW_KEY_SPACE])        g_cam.pos.y += speed;
-      if(g_keys[GLFW_KEY_LEFT_CONTROL]) g_cam.pos.y -= speed;
+      if(g_keys[GLFW_KEY_W]) g_cam.targetPos += g_cam.front()*speed;
+      if(g_keys[GLFW_KEY_S]) g_cam.targetPos -= g_cam.front()*speed;
+      if(g_keys[GLFW_KEY_A]) g_cam.targetPos -= g_cam.right()*speed;
+      if(g_keys[GLFW_KEY_D]) g_cam.targetPos += g_cam.right()*speed;
+      if(g_keys[GLFW_KEY_SPACE])        g_cam.targetPos.y += speed;
+      if(g_keys[GLFW_KEY_LEFT_CONTROL]) g_cam.targetPos.y -= speed;
     }
 
     if(g_resetRequested)
@@ -892,12 +902,10 @@ ImGui::BeginChild("lista_efektow");
       g_resetRequested = false;
     }
 
-    // --- LOGIKA OBSŁUGI EFEKTÓW (CIĄGŁYCH ORAZ JEDNORAZOWYCH) ---
     if (!selectedName.empty())
     {
         if (currentParams.ppsValue > 0.f)
         {
-            // Efekty ciągłe (Continuous)
             spawnAccum += currentParams.ppsValue * dt;
             while (spawnAccum >= 1.f && particles.size() < MAX_PARTICLES)
             {
@@ -907,11 +915,9 @@ ImGui::BeginChild("lista_efektow");
         }
         else
         {
-            // Efekty jednorazowe (Burst / One-shot) - np. FIRE_ARROW
-            // Gdy wszystkie cząsteczki znikną, generujemy nową serię
             if (particles.empty())
             {
-                int burstCount = 30; // Domyślna pula cząsteczek dla pojedynczego wystrzału
+                int burstCount = 30;
                 for (int i = 0; i < burstCount && particles.size() < MAX_PARTICLES; ++i)
                 {
                     spawnParticle(currentParams, particles);
@@ -963,7 +969,8 @@ ImGui::BeginChild("lista_efektow");
     glClearColor(0.02f,0.02f,0.03f,1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glm::mat4 proj = glm::perspective(glm::radians(g_fov), float(fbw)/float(fbh), 1.f, 8000.f);
+    // Dalsza płaszczyzna obcinania (far clip = 100000) zapewnia brak znikania odległych efektów
+    glm::mat4 proj = glm::perspective(glm::radians(FIXED_FOV), float(fbw)/float(fbh), 1.f, 100000.f);
     glm::mat4 view = g_cam.view();
 
     glEnable(GL_BLEND);
