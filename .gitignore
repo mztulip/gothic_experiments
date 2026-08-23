@@ -2,3 +2,4 @@ build
 *.o
 viewer3ds
 texviewer
+list_lights
