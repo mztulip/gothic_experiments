@@ -37,7 +37,6 @@ namespace fs = std::filesystem;
    Pomocnicze funkcje tekstowe
    --------------------------------------------------------------------- */
 
-// Bezpieczne sprawdzanie czy str zawiera subStr (case-insensitive)
 static bool containsIgnoreCase(const std::string& str, const std::string& subStr)
 {
   if (subStr.empty()) return true;
@@ -92,7 +91,7 @@ struct PfxParams
 {
   float     ppsValue = 0.f;
 
-  std::string visName; // Nazwa tekstury z vis_name_s
+  std::string visName;
 
   std::string shpType = "POINT";
   glm::vec3 shpOffset = glm::vec3(0.f);
@@ -558,6 +557,80 @@ static void cursorCallback(GLFWwindow*, double x, double y)
   g_cam.pitch  = std::clamp(g_cam.pitch, -89.f, 89.f);
 }
 
+// Funkcja pomocnicza ładowania efektu
+static void loadSelectedEffect(const std::string& name, const ParticleLibrary& lib, PfxParams& currentParams, 
+                                std::vector<LiveParticle>& particles, float& spawnAccum, bool autoZoom, 
+                                Texture2D& currentTexture, const std::string& datPath)
+{
+  if(lib.getParams(name, currentParams))
+  {
+    particles.clear();
+    spawnAccum = 0.f;
+    if(autoZoom)
+      reframeCameraToEffect(currentParams);
+    
+    printf("Zaladowano \"%s\": pps=%.1f shp=%s vel=%.1f+-%.1f lsp=%.0f+-%.0fms\n",
+           name.c_str(), currentParams.ppsValue, currentParams.shpType.c_str(),
+           currentParams.velAvg, currentParams.velVar, currentParams.lspAvg, currentParams.lspVar);
+
+    std::string gothicDir;
+    const char* envDir = std::getenv("GOTHIC2_DIR");
+
+    if (envDir != nullptr && envDir[0] != '\0')
+    {
+        gothicDir = envDir;
+    }
+    else
+    {
+        fs::path p(datPath);
+        while (p.has_parent_path() && p.filename() != "_Work")
+        {
+            p = p.parent_path();
+        }
+        
+        if (p.filename() == "_Work")
+        {
+            gothicDir = p.parent_path().string();
+        }
+        else
+        {
+            gothicDir = fs::path(datPath).parent_path().string();
+        }
+    }
+
+    currentTexture.free();
+
+    if (!currentParams.visName.empty())
+    {
+        std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
+
+        if (!fullPath.empty())
+        {
+            currentTexture = TextureLoader::loadFromFile(fullPath, false);
+
+            if (currentTexture.valid)
+            {
+                printf("  [TextureLoader] SUKCES: Zaladowano \"%s\" (GL ID: %u, %dx%d px)\n",
+                    currentParams.visName.c_str(), currentTexture.id, currentTexture.width, currentTexture.height);
+            }
+            else
+            {
+                printf("  [TextureLoader] BLAD: Nie udalo sie zaladowac: %s\n", fullPath.c_str());
+            }
+        }
+        else
+        {
+            printf("  [TextureLoader] NIE ZNALAZIONO pliku dla tekstury: \"%s\" (Szukano w: %s)\n", 
+                currentParams.visName.c_str(), gothicDir.c_str());
+        }
+    }
+    else
+    {
+      printf("  [TextureLoader] Efekt nie definiuje tekstury (vis_name_s jest puste).\n");
+    }
+  }
+}
+
 int main(int argc, char** argv)
 {
   std::string datPath = resolveDatPath(argc, argv);
@@ -646,7 +719,7 @@ int main(int argc, char** argv)
   PfxParams   currentParams;
   Texture2D   currentTexture;
   std::string selectedName;
-  char        searchBuffer[128] = ""; // Bufor na zapytanie wyszukiwania
+  char        searchBuffer[128] = "";
   float       spawnAccum = 0.f;
   bool        autoZoom = true;
   double      lastTime = glfwGetTime();
@@ -663,6 +736,46 @@ int main(int argc, char** argv)
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // Przygotowanie przefiltrowanej listy efektów do wyświetlenia i nawigacji
+    std::string searchFilter(searchBuffer);
+    std::vector<std::string> filteredNames;
+    for (const auto& name : lib.names())
+    {
+      if (containsIgnoreCase(name, searchFilter))
+        filteredNames.push_back(name);
+    }
+
+    // --- NAWIGACJA STRZAŁKAMI ---
+    // Obsługa zmiana efektu za pomocą strzałek (jeśli fokus nie jest w polu edycji tekstu)
+    if (!ImGui::GetIO().WantCaptureKeyboard && !filteredNames.empty())
+    {
+      int currentIndex = -1;
+      for (size_t i = 0; i < filteredNames.size(); ++i)
+      {
+        if (filteredNames[i] == selectedName)
+        {
+          currentIndex = static_cast<int>(i);
+          break;
+        }
+      }
+
+      int newIndex = currentIndex;
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+      {
+        newIndex = (currentIndex <= 0) ? static_cast<int>(filteredNames.size()) - 1 : currentIndex - 1;
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+      {
+        newIndex = (currentIndex < 0 || currentIndex >= static_cast<int>(filteredNames.size()) - 1) ? 0 : currentIndex + 1;
+      }
+
+      if (newIndex != currentIndex && newIndex >= 0 && newIndex < static_cast<int>(filteredNames.size()))
+      {
+        selectedName = filteredNames[newIndex];
+        loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPath);
+      }
+    }
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(320,800), ImGuiCond_FirstUseEver);
@@ -681,12 +794,12 @@ int main(int argc, char** argv)
     }
     ImGui::Separator();
 
-    // --- WYSZUKIWARKA ---
+    // Szukajka
     ImGui::InputText("##szukaj", searchBuffer, IM_ARRAYSIZE(searchBuffer));
     ImGui::SameLine();
     if(ImGui::Button("X"))
     {
-      searchBuffer[0] = '\0'; // Wyczyszczenie wyszukiwarki
+      searchBuffer[0] = '\0';
     }
     if (searchBuffer[0] == '\0')
     {
@@ -697,87 +810,22 @@ int main(int argc, char** argv)
     ImGui::Separator();
     ImGui::BeginChild("lista_efektow");
     
-    std::string searchFilter(searchBuffer);
-    for(auto& n : lib.names())
+    for(const auto& n : filteredNames)
     {
-      // Filtrowanie listy według wprowadzonego tekstu
-      if(!containsIgnoreCase(n, searchFilter))
-        continue;
-
-      bool isSelected = (n==selectedName);
+      bool isSelected = (n == selectedName);
       if(ImGui::Selectable(n.c_str(), isSelected))
       {
-        if(n!=selectedName)
+        if(n != selectedName)
         {
           selectedName = n;
-          if(lib.getParams(selectedName, currentParams))
-          {
-            particles.clear();
-            spawnAccum = 0.f;
-            if(autoZoom)
-              reframeCameraToEffect(currentParams);
-            
-            printf("Zaladowano \"%s\": pps=%.1f shp=%s vel=%.1f+-%.1f lsp=%.0f+-%.0fms\n",
-                   selectedName.c_str(), currentParams.ppsValue, currentParams.shpType.c_str(),
-                   currentParams.velAvg, currentParams.velVar, currentParams.lspAvg, currentParams.lspVar);
-
-            std::string gothicDir;
-            const char* envDir = std::getenv("GOTHIC2_DIR");
-
-            if (envDir != nullptr && envDir[0] != '\0')
-            {
-                gothicDir = envDir;
-            }
-            else
-            {
-                fs::path p(datPath);
-                while (p.has_parent_path() && p.filename() != "_Work")
-                {
-                    p = p.parent_path();
-                }
-                
-                if (p.filename() == "_Work")
-                {
-                    gothicDir = p.parent_path().string();
-                }
-                else
-                {
-                    gothicDir = fs::path(datPath).parent_path().string();
-                }
-            }
-
-            currentTexture.free();
-
-            if (!currentParams.visName.empty())
-            {
-                std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
-
-                if (!fullPath.empty())
-                {
-                    currentTexture = TextureLoader::loadFromFile(fullPath, false);
-
-                    if (currentTexture.valid)
-                    {
-                        printf("  [TextureLoader] SUKCES: Zaladowano \"%s\" (GL ID: %u, %dx%d px)\n",
-                            currentParams.visName.c_str(), currentTexture.id, currentTexture.width, currentTexture.height);
-                    }
-                    else
-                    {
-                        printf("  [TextureLoader] BLAD: Nie udalo sie zaladowac: %s\n", fullPath.c_str());
-                    }
-                }
-                else
-                {
-                    printf("  [TextureLoader] NIE ZNALAZIONO pliku dla tekstury: \"%s\" (Szukano w: %s)\n", 
-                        currentParams.visName.c_str(), gothicDir.c_str());
-                }
-            }
-            else
-            {
-              printf("  [TextureLoader] Efekt nie definiuje tekstury (vis_name_s jest puste).\n");
-            }
-          }
+          loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPath);
         }
+      }
+
+      // Automatyczny scroll w liście ImGui do aktualnie wybranego elementu przy nawigacji klawiaturą
+      if (isSelected)
+      {
+        ImGui::SetScrollHereY();
       }
     }
     ImGui::EndChild();
