@@ -250,6 +250,13 @@ static RenderMode g_renderMode = RENDER_TEXTURED;
 static bool g_showHUD = true;
 static bool g_enableLighting = true;
 
+// Ustawienia Światła
+static float g_lightAngle = 45.0f;        // Kąt w stopniach (0 - 360)
+static float g_lightIntensity = 1.4f;     // Moc oświetlenia głównego (Diffuse)
+static float g_ambientIntensity = 0.25f;  // Jasność tła/cieni (Ambient)
+static float g_lightDistanceMult = 0.75f; // Dystans od środka obiektu
+static float g_lightHeightOffset = 0.5f;  // Wysokość ponad najwyższy punkt obiektu
+
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -432,6 +439,8 @@ uniform sampler2D uTexture;
 uniform int uRenderMode; // 0: Texture, 1: Solid Color, 2: Wireframe
 uniform bool uEnableLighting;
 uniform vec3 uLightPos;
+uniform float uLightIntensity;   // Moc światła kierunkowego
+uniform float uAmbientIntensity; // Regulowana moc światła otoczenia (cienie)
 
 void main() {
     vec4 baseColor;
@@ -448,13 +457,10 @@ void main() {
         vec3 norm = normalize(FragNormal);
         vec3 lightDir = normalize(uLightPos - FragPos);
         
-        // Zmniejszone światło otoczenia dla mocniejszego kontrastu
-        float ambientStrength = 0.15;
-        vec3 ambient = ambientStrength * vec3(1.0);
+        vec3 ambient = uAmbientIntensity * vec3(1.0);
 
-        // Zwiększona moc i jasność światła (1.4f zamiast 0.85f)
         float diff = max(dot(norm, lightDir), 0.0);
-        vec3 diffuse = diff * vec3(1.4);
+        vec3 diffuse = diff * vec3(uLightIntensity);
 
         vec3 result = (ambient + diffuse) * baseColor.rgb;
         FragColor = vec4(result, baseColor.a);
@@ -610,7 +616,6 @@ int main(int argc, char** argv)
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
             glEnableVertexAttribArray(2);
 
-            // Automatyczne ustawienie kamery w zależności od rozmiaru modelu
             g_distance = mesh.maxDimension * 2.5f;
 
             if (activeTex.id != fallbackTex.id)
@@ -784,6 +789,38 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
+        // --- OKIENKO REGULACJI ŚWIATŁA ---
+        if (g_enableLighting)
+        {
+            ImGui::SetNextWindowPos(ImVec2((float)width - 10.0f, 210.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
+
+            ImGui::Begin("Ustawienia Swiatla", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+            ImGui::SliderFloat("Kat obrotu", &g_lightAngle, 0.0f, 360.0f, "%.1f deg");
+            ImGui::SliderFloat("Moc swiatla", &g_lightIntensity, 0.0f, 5.0f, "%.2f");
+            ImGui::SliderFloat("Jasnosc cieni (Ambient)", &g_ambientIntensity, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Odleglosc", &g_lightDistanceMult, 0.1f, 3.0f, "%.2f x");
+            ImGui::SliderFloat("Wysokosc", &g_lightHeightOffset, 0.0f, 2.0f, "%.2f x");
+
+            ImGui::Separator();
+            if (ImGui::Button("Szybkie podswietlenie cieni"))
+            {
+                g_ambientIntensity = 0.8f;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Resetuj swiatlo"))
+            {
+                g_lightAngle = 45.0f;
+                g_lightIntensity = 1.4f;
+                g_ambientIntensity = 0.25f;
+                g_lightDistanceMult = 0.75f;
+                g_lightHeightOffset = 0.5f;
+            }
+
+            ImGui::End();
+        }
+
         // Renderowanie sceny 3D
         glViewport(0, 0, width, height);
         glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
@@ -818,14 +855,14 @@ int main(int argc, char** argv)
         
         glm::mat4 MVP   = proj * view * model;
 
-        // STAŁA POZYCJA W ŚWIECIE (Przesunięcie w prawo, w przód i w górę pod kątem 45 stopni):
-        // Rozpiętość offsetu dopasowana do gabarytów obiektu
-        float lightOffset = mesh.maxDimension * 0.75f;
+        // OBLICZANIE POZYCJI ŚWIATŁA NA PODSTAWIE SUWAKÓW:
+        float lightRad = glm::radians(g_lightAngle);
+        float lightRadius = mesh.maxDimension * g_lightDistanceMult;
 
         glm::vec3 lightPos = glm::vec3(
-            mesh.center.x + lightOffset,                  // W prawo (+X)
-            mesh.maxBounds.y + (mesh.maxDimension * 0.5f), // W górę (+Y)
-            mesh.center.z + lightOffset                   // W przód (+Z)
+            mesh.center.x + lightRadius * sin(lightRad),
+            mesh.maxBounds.y + (mesh.maxDimension * g_lightHeightOffset),
+            mesh.center.z + lightRadius * cos(lightRad)
         );
 
         // 1. Rysowanie Modelu 3DS
@@ -833,6 +870,8 @@ int main(int argc, char** argv)
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "MVP"), 1, GL_FALSE, glm::value_ptr(MVP));
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "Model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniform3fv(glGetUniformLocation(meshProgram, "uLightPos"), 1, glm::value_ptr(lightPos));
+        glUniform1f(glGetUniformLocation(meshProgram, "uLightIntensity"), g_lightIntensity);
+        glUniform1f(glGetUniformLocation(meshProgram, "uAmbientIntensity"), g_ambientIntensity);
         glUniform1i(glGetUniformLocation(meshProgram, "uEnableLighting"), g_enableLighting);
         glUniform1i(glGetUniformLocation(meshProgram, "uRenderMode"), static_cast<int>(g_renderMode));
 
@@ -853,7 +892,7 @@ int main(int argc, char** argv)
             
             glUseProgram(lightProgram);
 
-            // Rozmiar wskaźnika światła dostosowany do skali obiektu (5% rozmiaru)
+            // Wskaźnik światła (żółta kostka)
             float lightCubeSize = std::max(0.2f, mesh.maxDimension * 0.05f);
             glm::mat4 lightModel = glm::translate(glm::mat4(1.0f), lightPos);
             lightModel = glm::scale(lightModel, glm::vec3(lightCubeSize));
