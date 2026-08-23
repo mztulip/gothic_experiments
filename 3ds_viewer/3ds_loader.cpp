@@ -46,6 +46,12 @@ struct Mesh3DS
     std::vector<Vertex> vertices;
     std::vector<Face> faces;
     std::string textureFile;
+    
+    // Bounding Box modelu
+    glm::vec3 minBounds{0.0f};
+    glm::vec3 maxBounds{0.0f};
+    glm::vec3 center{0.0f};
+    float maxDimension = 1.0f;
 };
 
 class Loader3DS
@@ -69,11 +75,31 @@ public:
 
         parseChunk(file, fileSize, outMesh);
         calculateNormals(outMesh);
+        calculateBounds(outMesh);
 
         return !outMesh.vertices.empty();
     }
 
 private:
+    static void calculateBounds(Mesh3DS& mesh)
+    {
+        if (mesh.vertices.empty()) return;
+
+        mesh.minBounds = mesh.vertices[0].pos;
+        mesh.maxBounds = mesh.vertices[0].pos;
+
+        for (const auto& v : mesh.vertices)
+        {
+            mesh.minBounds = glm::min(mesh.minBounds, v.pos);
+            mesh.maxBounds = glm::max(mesh.maxBounds, v.pos);
+        }
+
+        mesh.center = (mesh.minBounds + mesh.maxBounds) * 0.5f;
+        glm::vec3 size = mesh.maxBounds - mesh.minBounds;
+        mesh.maxDimension = std::max({size.x, size.y, size.z});
+        if (mesh.maxDimension <= 0.0001f) mesh.maxDimension = 1.0f;
+    }
+
     static void calculateNormals(Mesh3DS& mesh)
     {
         for (auto& v : mesh.vertices)
@@ -293,7 +319,6 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
 
-        // Klawisz M przełącza w pętli: Textured -> Solid Color -> Wireframe
         if (key == GLFW_KEY_M)
         {
             g_renderMode = static_cast<RenderMode>((static_cast<int>(g_renderMode) + 1) % 3);
@@ -414,26 +439,50 @@ void main() {
     if (uRenderMode == 0) {
         baseColor = texture(uTexture, TexCoord);
     } else if (uRenderMode == 1) {
-        baseColor = vec4(0.7, 0.7, 0.75, 1.0); // Szary, jednolity kolor matowy
+        baseColor = vec4(0.7, 0.7, 0.75, 1.0);
     } else {
-        baseColor = vec4(0.0, 0.8, 1.0, 1.0);  // Kolor linii siatki
+        baseColor = vec4(0.0, 0.8, 1.0, 1.0);
     }
 
     if (uEnableLighting && uRenderMode != 2) {
         vec3 norm = normalize(FragNormal);
         vec3 lightDir = normalize(uLightPos - FragPos);
         
-        float ambientStrength = 0.3;
+        // Zmniejszone światło otoczenia dla mocniejszego kontrastu
+        float ambientStrength = 0.15;
         vec3 ambient = ambientStrength * vec3(1.0);
 
+        // Zwiększona moc i jasność światła (1.4f zamiast 0.85f)
         float diff = max(dot(norm, lightDir), 0.0);
-        vec3 diffuse = diff * vec3(0.85);
+        vec3 diffuse = diff * vec3(1.4);
 
         vec3 result = (ambient + diffuse) * baseColor.rgb;
         FragColor = vec4(result, baseColor.a);
     } else {
         FragColor = baseColor;
     }
+}
+)GLSL";
+
+static const char* LIGHT_VERT_SRC = R"GLSL(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+uniform mat4 MVP;
+
+void main() {
+    gl_Position = MVP * vec4(aPos, 1.0);
+}
+)GLSL";
+
+static const char* LIGHT_FRAG_SRC = R"GLSL(
+#version 330 core
+out vec4 FragColor;
+
+uniform vec3 uColor;
+
+void main() {
+    FragColor = vec4(uColor, 1.0);
 }
 )GLSL";
 
@@ -506,7 +555,36 @@ int main(int argc, char** argv)
     glGenBuffers(1, &meshVBO);
     glGenBuffers(1, &meshEBO);
 
+    float cubeVertices[] = {
+        -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,   1.0f,  1.0f, -1.0f,  -1.0f,  1.0f, -1.0f,
+        -1.0f, -1.0f,  1.0f,   1.0f, -1.0f,  1.0f,   1.0f,  1.0f,  1.0f,  -1.0f,  1.0f,  1.0f
+    };
+
+    uint16_t cubeIndices[] = {
+        0, 1, 2,  2, 3, 0,
+        4, 5, 6,  6, 7, 4,
+        0, 1, 5,  5, 4, 0,
+        2, 3, 7,  7, 6, 2,
+        0, 3, 7,  7, 4, 0,
+        1, 2, 6,  6, 5, 1
+    };
+
+    GLuint lightVAO, lightVBO, lightEBO;
+    glGenVertexArrays(1, &lightVAO);
+    glGenBuffers(1, &lightVBO);
+    glGenBuffers(1, &lightEBO);
+
+    glBindVertexArray(lightVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, lightVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, lightEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
     GLuint meshProgram = createProgram(MESH_VERT_SRC, MESH_FRAG_SRC);
+    GLuint lightProgram = createProgram(LIGHT_VERT_SRC, LIGHT_FRAG_SRC);
+
     Texture2D fallbackTex = createFallbackTexture();
     Texture2D activeTex = fallbackTex;
 
@@ -531,6 +609,9 @@ int main(int argc, char** argv)
 
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
             glEnableVertexAttribArray(2);
+
+            // Automatyczne ustawienie kamery w zależności od rozmiaru modelu
+            g_distance = mesh.maxDimension * 2.5f;
 
             if (activeTex.id != fallbackTex.id)
             {
@@ -602,7 +683,7 @@ int main(int argc, char** argv)
             if (g_keys[GLFW_KEY_S] || g_keys[GLFW_KEY_MINUS]) g_distance += g_distance * 1.5f * dt;
         }
 
-        g_distance = std::clamp(g_distance, 1.0f, 50000.0f);
+        g_distance = std::clamp(g_distance, 0.1f, 500000.0f);
 
         bool userActive = g_isMouseDown ||
                           g_keys[GLFW_KEY_A] || g_keys[GLFW_KEY_D] || 
@@ -685,7 +766,6 @@ int main(int argc, char** argv)
                                    (int)(g_currentFileIdx + 1), (int)g_fileList.size(), filename.c_str());
                 ImGui::Separator();
 
-                // Przełącznik trybów w HUD
                 const char* modeNames[] = { "Tekstura (Textured)", "Jednolity kolor (Solid)", "Siatka (Wireframe)" };
                 int currentModeInt = static_cast<int>(g_renderMode);
                 if (ImGui::Combo("Tryb widoku (M)", &currentModeInt, modeNames, IM_ARRAYSIZE(modeNames)))
@@ -704,7 +784,7 @@ int main(int argc, char** argv)
             ImGui::End();
         }
 
-        // Renderowanie scene 3D
+        // Renderowanie sceny 3D
         glViewport(0, 0, width, height);
         glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -720,23 +800,36 @@ int main(int argc, char** argv)
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 
-        glUseProgram(meshProgram);
-
         float radYaw = glm::radians(g_yaw);
         float radPitch = glm::radians(g_pitch);
 
+        // Kamera krąży wokół środka ciężkości modelu (mesh.center)
         glm::vec3 camPos;
-        camPos.x = g_distance * cos(radPitch) * sin(radYaw);
-        camPos.y = g_distance * sin(radPitch);
-        camPos.z = g_distance * cos(radPitch) * cos(radYaw);
+        camPos.x = mesh.center.x + g_distance * cos(radPitch) * sin(radYaw);
+        camPos.y = mesh.center.y + g_distance * sin(radPitch);
+        camPos.z = mesh.center.z + g_distance * cos(radPitch) * cos(radYaw);
 
         glm::mat4 model = glm::mat4(1.0f);
-        glm::mat4 view  = glm::lookAt(camPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 proj  = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.5f, 100000.0f);
+        glm::mat4 view  = glm::lookAt(camPos, mesh.center, glm::vec3(0.0f, 1.0f, 0.0f));
+        
+        float nearPlane = std::max(0.1f, mesh.maxDimension * 0.01f);
+        float farPlane  = std::max(1000.0f, mesh.maxDimension * 100.0f);
+        glm::mat4 proj  = glm::perspective(glm::radians(45.0f), (float)width / (float)height, nearPlane, farPlane);
+        
         glm::mat4 MVP   = proj * view * model;
 
-        glm::vec3 lightPos = camPos + glm::vec3(0.0f, g_distance * 0.5f, 0.0f);
+        // STAŁA POZYCJA W ŚWIECIE (Przesunięcie w prawo, w przód i w górę pod kątem 45 stopni):
+        // Rozpiętość offsetu dopasowana do gabarytów obiektu
+        float lightOffset = mesh.maxDimension * 0.75f;
 
+        glm::vec3 lightPos = glm::vec3(
+            mesh.center.x + lightOffset,                  // W prawo (+X)
+            mesh.maxBounds.y + (mesh.maxDimension * 0.5f), // W górę (+Y)
+            mesh.center.z + lightOffset                   // W przód (+Z)
+        );
+
+        // 1. Rysowanie Modelu 3DS
+        glUseProgram(meshProgram);
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "MVP"), 1, GL_FALSE, glm::value_ptr(MVP));
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "Model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniform3fv(glGetUniformLocation(meshProgram, "uLightPos"), 1, glm::value_ptr(lightPos));
@@ -751,6 +844,26 @@ int main(int argc, char** argv)
         {
             glBindVertexArray(meshVAO);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.faces.size() * 3), GL_UNSIGNED_SHORT, 0);
+        }
+
+        // 2. Rysowanie Kostki Źródła Światła
+        if (g_enableLighting)
+        {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            
+            glUseProgram(lightProgram);
+
+            // Rozmiar wskaźnika światła dostosowany do skali obiektu (5% rozmiaru)
+            float lightCubeSize = std::max(0.2f, mesh.maxDimension * 0.05f);
+            glm::mat4 lightModel = glm::translate(glm::mat4(1.0f), lightPos);
+            lightModel = glm::scale(lightModel, glm::vec3(lightCubeSize));
+            glm::mat4 lightMVP = proj * view * lightModel;
+
+            glUniformMatrix4fv(glGetUniformLocation(lightProgram, "MVP"), 1, GL_FALSE, glm::value_ptr(lightMVP));
+            glUniform3f(glGetUniformLocation(lightProgram, "uColor"), 1.0f, 0.95f, 0.3f);
+
+            glBindVertexArray(lightVAO);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT, 0);
         }
 
         ImGui::Render();
@@ -769,7 +882,13 @@ int main(int argc, char** argv)
     glDeleteVertexArrays(1, &meshVAO);
     glDeleteBuffers(1, &meshVBO);
     glDeleteBuffers(1, &meshEBO);
+
+    glDeleteVertexArrays(1, &lightVAO);
+    glDeleteBuffers(1, &lightVBO);
+    glDeleteBuffers(1, &lightEBO);
+
     glDeleteProgram(meshProgram);
+    glDeleteProgram(lightProgram);
 
     glfwTerminate();
     return 0;
