@@ -1,28 +1,30 @@
-// pfxdump - wczytuje ParticleFx.dat (skompilowany skrypt Daedalus z Gothic/
-// Gothic II) i wypisuje wszystkie parametry pojedynczego efektu czasteczkowego
-// (np. iskierki wokol mikstury) po jego nazwie.
-//
-// Mechanizm: efekty czasteczkowe NIE sa osobnymi plikami .PFX w sensie
-// samodzielnego formatu binarnego - kazdy .PFX to w rzeczywistosci nazwana
-// INSTANCJA klasy C_PARTICLEFX wewnatrz jednego, wspolnego, skompilowanego
-// skryptu Daedalus (ParticleFx.dat). Zeby dostac konkretny efekt, trzeba:
-//   1. wczytac caly skrypt do zenkit::DaedalusScript,
-//   2. zarejestrowac wiazanie klasy C_PARTICLEFX <-> C++ struct przez
-//      zenkit::IParticleEffect::register_(),
-//   3. odpalic Daedalus VM i "zainicjalizowac" instancje o danej nazwie -
-//      to uruchamia bajtkod, ktory wypelnia pola struct wartosciami z
-//      oryginalnego zrodla efektu.
-//
-// Dokladnie tak samo robi to OpenGothic w
-// game/game/definitions/particlesdefinitions.cpp (ParticlesDefinitions::implGetDirect).
-//
-// Uzycie:
-//   ./pfxdump ParticleFx.dat PFX_IT_MAGICSPARKLE
-//   ./pfxdump "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Scripts/_compiled/ParticleFx.dat" PFX_IT_MAGICSPARKLE
-//
-// Jesli nie znasz dokladnej nazwy efektu, uruchom z flaga --list, zeby
-// wypisac wszystkie symbole klasy C_PARTICLEFX zdefiniowane w pliku:
-//   ./pfxdump ParticleFx.dat --list
+/*
+   pfxdump - wczytuje PARTICLEFX.DAT (skompilowany skrypt Daedalus z Gothic/
+   Gothic II) i wypisuje wszystkie parametry pojedynczego efektu czasteczkowego
+   (np. iskierki wokol mikstury) po jego nazwie.
+
+   Mechanizm: efekty czasteczkowe NIE sa osobnymi plikami .PFX w sensie
+   samodzielnego formatu binarnego - kazdy .PFX to w rzeczywistosci nazwana
+   INSTANCJA klasy C_PARTICLEFX wewnatrz jednego, wspolnego, skompilowanego
+   skryptu Daedalus (PARTICLEFX.DAT). Zeby dostac konkretny efekt, trzeba:
+     1. wczytac caly skrypt do zenkit::DaedalusScript,
+     2. zarejestrowac wiazanie klasy C_PARTICLEFX <-> C++ struct przez
+        zenkit::IParticleEffect::register_(),
+     3. odpalic Daedalus VM i "zainicjalizowac" instancje o danej nazwie -
+        to uruchamia bajtkod, ktory wypelnia pola struct wartosciami z
+        oryginalnego zrodla efektu.
+
+   Dokladnie tak samo robi to OpenGothic w
+   game/game/definitions/particlesdefinitions.cpp (ParticlesDefinitions::implGetDirect).
+
+   Uzycie:
+     ./pfxdump PARTICLEFX.DAT PFX_IT_MAGICSPARKLE
+     ./pfxdump "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Scripts/_compiled/PARTICLEFX.DAT" PFX_IT_MAGICSPARKLE
+
+   Jesli nie znasz dokladnej nazwy efektu, uruchom z flaga --list, zeby
+   wypisac wszystkie symbole klasy C_PARTICLEFX zdefiniowane w pliku:
+     ./pfxdump PARTICLEFX.DAT --list
+*/
 
 #include <zenkit/DaedalusScript.hh>
 #include <zenkit/DaedalusVm.hh>
@@ -115,9 +117,9 @@ static void printEffect(const std::string& name, const zenkit::IParticleEffect& 
   printf("  m_bis_ambient_pfx    = %d\n", p.m_bis_ambient_pfx);
   }
 
-// Wypisuje nazwy wszystkich symboli w skrypcie, ktore sa instancjami klasy
-// C_PARTICLEFX - przydatne, zeby znalezc dokladna nazwe efektu bez
-// przekopywania sie przez skrypty Daedalus recznie.
+/* Wypisuje nazwy wszystkich symboli w skrypcie, ktore sa instancjami klasy
+   C_PARTICLEFX - przydatne, zeby znalezc dokladna nazwe efektu bez
+   przekopywania sie przez skrypty Daedalus recznie. */
 static void listEffects(zenkit::DaedalusScript& script)
 {
   auto* cls = script.find_symbol_by_name("C_PARTICLEFX");
@@ -165,10 +167,22 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  // Rejestrujemy wiazanie C_PARTICLEFX <-> zenkit::IParticleEffect - bez
-  // tego VM nie wie, jak zmapowac pola skryptu na nasza strukture C++.
-  zenkit::IParticleEffect::register_(script);
-  zenkit::IParticleEffectEmitKey::register_(script);
+  /* Rejestrujemy wiazanie C_PARTICLEFX <-> zenkit::IParticleEffect - bez
+     tego VM nie wie, jak zmapowac pola skryptu na nasza strukture C++.
+     NIE rejestrujemy IParticleEffectEmitKey (C_PARTICLEFXEMITKEY) - ta klasa
+     bywa niepelna/nieobecna w niektorych wersjach PARTICLEFX.DAT i register_()
+     rzuca wtedy zenkit::DaedalusSymbolNotFound. Nie jest nam potrzebna do
+     wczytywania zwyklych efektow (--list oraz wypisanie pojedynczego efektu),
+     wiec pomijamy ja calkowicie zamiast walczyc z brakujacymi polami. */
+  try
+  {
+    zenkit::IParticleEffect::register_(script);
+  }
+  catch(const std::exception& e)
+  {
+    fprintf(stderr, "Nie udalo sie zarejestrowac C_PARTICLEFX: %s\n", e.what());
+    return 1;
+  }
 
   if(fxName=="--list")
   {
@@ -187,7 +201,7 @@ int main(int argc, char** argv)
   }
 
   auto pfx = std::make_shared<zenkit::IParticleEffect>();
-  pfx->vis_tex_is_quadpoly = 1; // domyslna wartosc, tak samo jak w OpenGothic
+  pfx->vis_tex_is_quadpoly = 1; /* domyslna wartosc, tak samo jak w OpenGothic */
 
   try
   {
