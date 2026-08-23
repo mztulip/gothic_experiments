@@ -6,6 +6,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -21,10 +24,11 @@
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------
-// 1. Parser plików .3DS
+// 1. Parser plików .3DS z obsługą koordynatów UV i Nazw Materiałów
 // ---------------------------------------------------------------------
 struct Vertex {
     glm::vec3 pos;
+    glm::vec2 uv;
 };
 
 struct Face {
@@ -34,6 +38,7 @@ struct Face {
 struct Mesh3DS {
     std::vector<Vertex> vertices;
     std::vector<Face> faces;
+    std::string textureFile;
 };
 
 class Loader3DS {
@@ -44,6 +49,7 @@ public:
 
         outMesh.vertices.clear();
         outMesh.faces.clear();
+        outMesh.textureFile = "";
 
         file.seekg(0, std::ios::end);
         uint32_t fileSize = static_cast<uint32_t>(file.tellg());
@@ -68,6 +74,8 @@ private:
                 case 0x4D4D: // MAIN3DS
                 case 0x3D3D: // EDIT3DS
                 case 0x4000: // TRI_OBJECT
+                case 0xAFFF: // MAT_ENTRY
+                case 0xA200: // MAT_TEXMAP
                 {
                     if (chunkId == 0x4000) {
                         char ch;
@@ -85,7 +93,23 @@ private:
                     uint16_t numVertices;
                     file.read(reinterpret_cast<char*>(&numVertices), sizeof(numVertices));
                     mesh.vertices.resize(numVertices);
-                    file.read(reinterpret_cast<char*>(mesh.vertices.data()), numVertices * sizeof(Vertex));
+                    for (int i = 0; i < numVertices; ++i) {
+                        file.read(reinterpret_cast<char*>(&mesh.vertices[i].pos), sizeof(glm::vec3));
+                        mesh.vertices[i].uv = glm::vec2(0.0f, 0.0f);
+                    }
+                    break;
+                }
+                case 0x4140: // TEX_VERTS (UV Coordinates)
+                {
+                    uint16_t numUVs;
+                    file.read(reinterpret_cast<char*>(&numUVs), sizeof(numUVs));
+                    if (numUVs == mesh.vertices.size()) {
+                        for (int i = 0; i < numUVs; ++i) {
+                            file.read(reinterpret_cast<char*>(&mesh.vertices[i].uv), sizeof(glm::vec2));
+                        }
+                    } else {
+                        file.seekg(nextChunk, std::ios::beg);
+                    }
                     break;
                 }
                 case 0x4120: // FACE_ARRAY
@@ -98,6 +122,17 @@ private:
                         uint16_t flags;
                         file.read(reinterpret_cast<char*>(&flags), sizeof(flags));
                     }
+                    break;
+                }
+                case 0xA300: // MAT_MAPNAME
+                {
+                    char ch;
+                    std::string texName = "";
+                    while (file.get(ch) && ch != '\0') {
+                        texName += ch;
+                    }
+                    mesh.textureFile = texName;
+                    file.seekg(nextChunk, std::ios::beg);
                     break;
                 }
                 default:
@@ -124,6 +159,10 @@ static double g_lastMouseY = 0.0;
 static std::vector<std::string> g_fileList;
 static size_t g_currentFileIdx = 0;
 static bool g_needMeshReload = false;
+
+// Opcje Widoków:
+static bool g_wireframeMode = true;   // Klawisz M: Przełącza Siatkę / Teksturę
+static bool g_showHUD = true;         // Klawisz T: Ukrywa/Pokazuje Tekst i HUD
 
 // Callbacks GLFW
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
@@ -190,6 +229,16 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
 
+        // Klawisz M: Przełączanie trybu Siatka / Tekstury
+        if (key == GLFW_KEY_M) {
+            g_wireframeMode = !g_wireframeMode;
+        }
+
+        // Klawisz T: Pokazuj/Ukrywaj tekst i HUD
+        if (key == GLFW_KEY_T) {
+            g_showHUD = !g_showHUD;
+        }
+
         if (!g_fileList.empty()) {
             if (key == GLFW_KEY_N) {
                 g_currentFileIdx = (g_currentFileIdx + 1) % g_fileList.size();
@@ -226,16 +275,40 @@ void scanGothicDirectory(const std::string& gothicDir) {
     std::sort(g_fileList.begin(), g_fileList.end());
 }
 
+// Generowanie awaryjnej tekstury (Szachownica)
+GLuint createFallbackTexture() {
+    GLuint texID;
+    glGenTextures(1, &texID);
+    glBindTexture(GL_TEXTURE_2D, texID);
+
+    uint32_t pixels[16 * 16];
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            bool check = ((x / 2) + (y / 2)) % 2 == 0;
+            pixels[y * 16 + x] = check ? 0xFFFFFFFF : 0xFF808080;
+        }
+    }
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    return texID;
+}
+
 // ---------------------------------------------------------------------
-// 3. Shader Modelu
+// 3. Shadery Modelu (Z obsługą tekstur i koloru)
 // ---------------------------------------------------------------------
 static const char* MESH_VERT_SRC = R"GLSL(
 #version 330 core
 layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec2 aTexCoord;
+
+out vec2 TexCoord;
 uniform mat4 MVP;
 
 void main() {
     gl_Position = MVP * vec4(aPos, 1.0);
+    TexCoord = aTexCoord;
 }
 )GLSL";
 
@@ -243,8 +316,16 @@ static const char* MESH_FRAG_SRC = R"GLSL(
 #version 330 core
 out vec4 FragColor;
 
+in vec2 TexCoord;
+uniform sampler2D uTexture;
+uniform bool uUseTexture;
+
 void main() {
-    FragColor = vec4(0.0, 0.8, 1.0, 1.0);
+    if (uUseTexture) {
+        FragColor = texture(uTexture, TexCoord);
+    } else {
+        FragColor = vec4(0.0, 0.8, 1.0, 1.0);
+    }
 }
 )GLSL";
 
@@ -315,8 +396,10 @@ int main(int argc, char** argv) {
     glGenBuffers(1, &meshEBO);
 
     GLuint meshProgram = createProgram(MESH_VERT_SRC, MESH_FRAG_SRC);
+    GLuint fallbackTex = createFallbackTexture();
+    GLuint activeTex = fallbackTex;
 
-    Mesh3DS mesh;
+Mesh3DS mesh;
     auto uploadMesh = [&](const std::string& path) {
         if (Loader3DS::load(path, mesh)) {
             glBindVertexArray(meshVAO);
@@ -327,11 +410,70 @@ int main(int argc, char** argv) {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, meshEBO);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.faces.size() * sizeof(Face), mesh.faces.data(), GL_STATIC_DRAW);
 
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+            // Pozycje (location 0)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
             glEnableVertexAttribArray(0);
+
+            // UV (location 1)
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+            glEnableVertexAttribArray(1);
+
+            // Czyszczenie starej tekstury z pamięci GPU (jeśli była customowa)
+            if (activeTex != fallbackTex) {
+                glDeleteTextures(1, &activeTex);
+                activeTex = fallbackTex;
+            }
+
+            if (!mesh.textureFile.empty()) {
+                std::cout << "[3DS] Model wymaga tekstury: " << mesh.textureFile << std::endl;
+
+                // 1. Szukaj w tym samym folderze co plik .3DS
+                fs::path texPath = fs::path(path).parent_path() / mesh.textureFile;
+
+                // 2. Jeśli nie ma, szukaj w globalnym folderze Textures Gothica (jeśli podano GOTHIC2_DIR)
+                if (!fs::exists(texPath)) {
+                    const char* envPath = std::getenv("GOTHIC2_DIR");
+                    if (envPath) {
+                        fs::path gothicTexDir = fs::path(envPath) / "_Work" / "Data" / "Textures";
+                        if (fs::exists(gothicTexDir)) {
+                            try {
+                                for (const auto& entry : fs::recursive_directory_iterator(gothicTexDir)) {
+                                    if (entry.is_regular_file() && entry.path().filename().string() == mesh.textureFile) {
+                                        texPath = entry.path();
+                                        break;
+                                    }
+                                }
+                            } catch (...) {}
+                        }
+                    }
+                }
+
+                if (fs::exists(texPath)) {
+                    int w, h, comp;
+                    stbi_set_flip_vertically_on_load(true);
+                    unsigned char* imgData = stbi_load(texPath.string().c_str(), &w, &h, &comp, 4);
+
+                    if (imgData) {
+                        GLuint newTex;
+                        glGenTextures(1, &newTex);
+                        glBindTexture(GL_TEXTURE_2D, newTex);
+                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, imgData);
+                        glGenerateMipmap(GL_TEXTURE_2D);
+                        stbi_image_free(imgData);
+                        activeTex = newTex;
+                        std::cout << " -> Zaladowano teksture: " << texPath.string() << std::endl;
+                    } else {
+                        std::cout << " -> Blad odczytu pliku tekstury przez stb_image!" << std::endl;
+                    }
+                } else {
+                    std::cout << " -> Plik tekstury NIE ISTNIEJE na dysku (uzywam szachownicy)." << std::endl;
+                }
+            } else {
+                std::cout << "[3DS] Model nie posiada przypisanej tekstury w pliku 3DS." << std::endl;
+            }
         }
     };
-
+    
     uploadMesh(g_fileList[g_currentFileIdx]);
     double lastTime = glfwGetTime();
 
@@ -419,27 +561,31 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // --- 2. OKNO IMGUI: HUD Informacyjny ---
-        ImGui::SetNextWindowPos(ImVec2((float)width - 10.0f, 10.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.65f);
+        if (g_showHUD) {
+            ImGui::SetNextWindowPos(ImVec2((float)width - 10.0f, 10.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.65f);
 
-        ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | 
-                                   ImGuiWindowFlags_AlwaysAutoResize | 
-                                   ImGuiWindowFlags_NoSavedSettings | 
-                                   ImGuiWindowFlags_NoFocusOnAppearing | 
-                                   ImGuiWindowFlags_NoNav | 
-                                   ImGuiWindowFlags_NoMove;
+            ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | 
+                                       ImGuiWindowFlags_AlwaysAutoResize | 
+                                       ImGuiWindowFlags_NoSavedSettings | 
+                                       ImGuiWindowFlags_NoFocusOnAppearing | 
+                                       ImGuiWindowFlags_NoNav | 
+                                       ImGuiWindowFlags_NoMove;
 
-        if (ImGui::Begin("StatusHUD", nullptr, hudFlags)) {
-            std::string filename = fs::path(g_fileList[g_currentFileIdx]).filename().string();
-            
-            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.0f, 1.0f), "[%d/%d] %s", 
-                               (int)(g_currentFileIdx + 1), (int)g_fileList.size(), filename.c_str());
-            ImGui::Separator();
-            ImGui::Text("N/P: Zmiana pliku");
-            ImGui::Text("LPM + Przeciagnij / Strzalki: Kamera");
-            ImGui::Text("Rolka / W / S / +/-: Zoom (Dysk: %.0f)", g_distance);
+            if (ImGui::Begin("StatusHUD", nullptr, hudFlags)) {
+                std::string filename = fs::path(g_fileList[g_currentFileIdx]).filename().string();
+                
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.0f, 1.0f), "[%d/%d] %s", 
+                                   (int)(g_currentFileIdx + 1), (int)g_fileList.size(), filename.c_str());
+                ImGui::Separator();
+                ImGui::Checkbox("Siatka / Wireframe (M)", &g_wireframeMode);
+                ImGui::Checkbox("Pokaz HUD (T)", &g_showHUD);
+                ImGui::Text("N/P: Zmiana pliku");
+                ImGui::Text("LPM + Przeciagnij / Strzalki: Kamera");
+                ImGui::Text("Rolka / W / S / +/-: Zoom (Dysk: %.0f)", g_distance);
+            }
+            ImGui::End();
         }
-        ImGui::End();
 
         // Renderowanie OpenGL 3D
         glViewport(0, 0, width, height);
@@ -447,7 +593,14 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glEnable(GL_DEPTH_TEST);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+        // Przełączanie trybu Siatki vs Tekstury
+        if (g_wireframeMode) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        } else {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
+
         glUseProgram(meshProgram);
 
         float radYaw = glm::radians(g_yaw);
@@ -464,6 +617,12 @@ int main(int argc, char** argv) {
         glm::mat4 MVP   = proj * view * model;
 
         glUniformMatrix4fv(glGetUniformLocation(meshProgram, "MVP"), 1, GL_FALSE, glm::value_ptr(MVP));
+
+        // Tekstury w shaderze
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, activeTex);
+        glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
+        glUniform1i(glGetUniformLocation(meshProgram, "uUseTexture"), !g_wireframeMode);
 
         if (!mesh.faces.empty()) {
             glBindVertexArray(meshVAO);
