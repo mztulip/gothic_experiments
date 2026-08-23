@@ -1,38 +1,5 @@
 /*
-   pfxview - podglad na zywo efektow czasteczkowych z Gothic/Gothic II.
-
-   Wczytuje PARTICLEFX.DAT (skompilowany skrypt Daedalus), pokazuje liste
-   WSZYSTKICH efektow C_PARTICLEFX w oknie ImGui po lewej stronie - klikniecie
-   na nazwe od razu laduje ten efekt i uruchamia jego podglad 3D (symulacja
-   CPU-side: emisja/predkosc/grawitacja/czas zycia/interpolacja koloru,
-   rozmiaru,alfy), renderowany jako miekkie, addytywne point-sprite'y.
-
-   SCIEZKA DO PLIKU .DAT:
-     1) jesli podano argument w linii polecen - uzywamy go wprost,
-     2) w przeciwnym razie budujemy sciezke ze zmiennej srodowiskowej
-        GOTHIC2_DIR (katalog instalacji Gothic II), doklejajac
-        "_Work/Data/Scripts/_compiled/PARTICLEFX.DAT".
-
-   CELOWE UPROSZCZENIA SYMULACJI (patrz rozmowa):
-     - brak prawdziwych tekstur czasteczek (vis_name_s) - proceduralne kolko
-     - emiter typu MESH traktowany jak POINT
-     - brak lancuchowych efektow potomnych (ppsCreateEm) i decali (ppsValue<0)
-     - dirMode TARGET traktowany jak DIR (staly kierunek, bez namierzania)
-     - ksztalty BOX/CIRCLE zawsze wypelnione objetosciowo
-
-   Sterowanie:
-     lewy klik na liscie efektow (w panelu)  - wybor/zaladowanie efektu
-     LEWY przycisk myszy (przytrzymany, POZA panelem) + ruch - patrzenie
-     kolko myszy            - zoom (pole widzenia kamery)
-     WASD / Space / LCtrl   - ruch kamery
-     R                      - reset symulacji (usuwa wszystkie zywe czasteczki)
-     ESC                    - wyjscie
-
-   Budowanie: patrz build.sh / CMakeLists_pfxview.txt
-
-   Uzycie:
-     ./pfxview                              # sciezka z $GOTHIC2_DIR
-     ./pfxview /pelna/sciezka/PARTICLEFX.DAT # jawna sciezka, nadpisuje env
+   pfxview - podglad na zywo efektow czasteczkowych z Gothic/Gothic II z integracją TextureLoadera.
 */
 
 #include <epoxy/gl.h>
@@ -60,11 +27,14 @@
 #include <memory>
 #include <random>
 #include <algorithm>
+#include <filesystem>
+
+#include "texture_loader.h"
+
+namespace fs = std::filesystem;
 
 /* ---------------------------------------------------------------------
-   Parsowanie parametrow efektu (analogicznie do ParticleFx::loadArr /
-   Parser::loadVec3 w OpenGothic - proste tokenizowanie liczb rozdzielonych
-   bialymi znakami)
+   Parsowanie parametrow efektu
    --------------------------------------------------------------------- */
 
 static glm::vec3 parseVec3(const std::string& s, glm::vec3 fallback = glm::vec3(0.f))
@@ -106,6 +76,8 @@ struct PfxParams
 {
   float     ppsValue = 0.f;
 
+  std::string visName; // Nazwa tekstury z vis_name_s
+
   std::string shpType = "POINT";
   glm::vec3 shpOffset = glm::vec3(0.f);
   glm::vec3 shpDim    = glm::vec3(0.f);
@@ -130,12 +102,13 @@ struct PfxParams
   float     sizeEndScale = 1.f;
   float     alphaStart = 1.f;
   float     alphaEnd   = 1.f;
-  };
+};
 
 static PfxParams extractParams(const zenkit::IParticleEffect& p)
 {
   PfxParams out;
   out.ppsValue      = p.pps_value;
+  out.visName       = p.vis_name_s;
 
   out.shpType       = p.shp_type_s;
   out.shpOffset     = parseVec3(p.shp_offset_vec_s);
@@ -155,24 +128,20 @@ static PfxParams extractParams(const zenkit::IParticleEffect& p)
 
   out.gravity       = parseVec3(p.fly_gravity_s);
 
-  /* vis_tex_color_start/end_s sa zwykle w zakresie 0..255 (jak bajty RGB) */
   out.colorStart    = parseVec3(p.vis_tex_color_start_s, glm::vec3(255.f))/255.f;
   out.colorEnd      = parseVec3(p.vis_tex_color_end_s,   glm::vec3(255.f))/255.f;
 
   out.sizeStart     = parseVec2(p.vis_size_start_s, glm::vec2(10.f));
   out.sizeEndScale  = p.vis_size_end_scale>0.f ? p.vis_size_end_scale : 1.f;
 
-  /* vis_alpha_start/end sa tez w zakresie 0..255 (patrz ParticleFx.cpp: /255.f) */
   out.alphaStart    = std::clamp(p.vis_alpha_start/255.f, 0.f, 1.f);
   out.alphaEnd      = std::clamp(p.vis_alpha_end/255.f,   0.f, 1.f);
 
   return out;
-  }
+}
 
 /* ---------------------------------------------------------------------
-   ParticleLibrary - wczytuje PARTICLEFX.DAT raz, zbiera liste WSZYSTKICH
-   nazw efektow (C_PARTICLEFX) przed przekazaniem skryptu na wlasnosc VM,
-   i pozwala pozniej pobierac sparsowane parametry po nazwie na zadanie.
+   ParticleLibrary
    --------------------------------------------------------------------- */
 class ParticleLibrary
 {
@@ -201,8 +170,6 @@ public:
       return false;
     }
 
-    /* Zbieramy nazwy PRZED przeniesieniem skryptu do VM - po std::move
-       ponizej obiekt 'script' przestaje byc uzywalny. */
     auto* cls = script.find_symbol_by_name("C_PARTICLEFX");
     if(cls!=nullptr)
     {
@@ -249,10 +216,10 @@ public:
 private:
   std::unique_ptr<zenkit::DaedalusVm> vm;
   std::vector<std::string>            effectNames;
-  };
+};
 
 /* ---------------------------------------------------------------------
-   Rozwiazanie sciezki do PARTICLEFX.DAT: jawny argument > $GOTHIC2_DIR
+   Rozwiazanie sciezki do PARTICLEFX.DAT
    --------------------------------------------------------------------- */
 static std::string resolveDatPath(int argc, char** argv)
 {
@@ -269,7 +236,7 @@ static std::string resolveDatPath(int argc, char** argv)
   }
 
   return "";
-  }
+}
 
 /* ---------------------------------------------------------------------
    Symulacja czasteczek
@@ -280,14 +247,14 @@ struct LiveParticle
   glm::vec3 vel;
   float     age      = 0.f; /* ms */
   float     lifetime = 500.f; /* ms */
-  };
+};
 
 struct ParticleVertex
 {
   glm::vec3 pos;
   float     size;
   glm::vec4 colorAlpha;
-  };
+};
 
 static std::mt19937 g_rng(std::random_device{}());
 
@@ -296,7 +263,7 @@ static float randRange(float lo, float hi)
   if(hi<lo) std::swap(lo,hi);
   std::uniform_real_distribution<float> d(lo,hi);
   return d(g_rng);
-  }
+}
 
 static glm::vec3 sampleEmitterPos(const PfxParams& p)
 {
@@ -330,10 +297,9 @@ static glm::vec3 sampleEmitterPos(const PfxParams& p)
     float cosEl = std::sqrt(std::max(0.f,1.f-sinEl*sinEl));
     local = glm::vec3(rr*cosEl*std::cos(az), rr*sinEl, rr*cosEl*std::sin(az));
   }
-  /* POINT / MESH (fallback) -> local = (0,0,0) */
 
   return local + p.shpOffset;
-  }
+}
 
 static glm::vec3 baseDirection(const PfxParams& p)
 {
@@ -341,7 +307,7 @@ static glm::vec3 baseDirection(const PfxParams& p)
   float elevRad = glm::radians(p.dirAngleElev);
   float cosElev = std::cos(elevRad);
   return glm::vec3(cosElev*std::sin(headRad), std::sin(elevRad), cosElev*std::cos(headRad));
-  }
+}
 
 static glm::vec3 sampleDirection(const PfxParams& p)
 {
@@ -354,15 +320,9 @@ static glm::vec3 sampleDirection(const PfxParams& p)
     float cosElev = std::cos(elevRad);
     return glm::vec3(cosElev*std::sin(headRad), std::sin(elevRad), cosElev*std::cos(headRad));
   }
-  /* DIR/TARGET -> staly kat bez losowania (patrz uproszczenia) */
   return baseDirection(p);
-  }
+}
 
-/* Przyblizony promien "bryly" jaka zajmuje efekt, liczony analitycznie z
-   parametrow (bez symulacji) - uzywany do automatycznego dopasowania kamery
-   przy przelaczaniu efektow. Sumuje: rozmiar samego emitera, maksymalny
-   dystans jaki zdazy przebyc czasteczka w czasie swojego zycia, oraz
-   dodatkowy spadek pod wplywem grawitacji. */
 static float estimateEffectRadius(const PfxParams& p)
 {
   float shapeExtent = std::max({p.shpDim.x, p.shpDim.y, p.shpDim.z}) * 0.5f;
@@ -372,8 +332,8 @@ static float estimateEffectRadius(const PfxParams& p)
   float gravityDrop   = 0.5f * glm::length(p.gravity) * lifeSec * lifeSec;
 
   float radius = shapeExtent + travel + gravityDrop;
-  return std::max(radius, 15.f); /* sensowne minimum, np. dla malej iskry */
-  }
+  return std::max(radius, 15.f);
+}
 
 static void spawnParticle(const PfxParams& p, std::vector<LiveParticle>& particles)
 {
@@ -385,7 +345,7 @@ static void spawnParticle(const PfxParams& p, std::vector<LiveParticle>& particl
   np.age = 0.f;
   np.lifetime = std::max(10.f, randRange(p.lspAvg-p.lspVar, p.lspAvg+p.lspVar));
   particles.push_back(np);
-  }
+}
 
 /* ---------------------------------------------------------------------
    Shadery
@@ -409,7 +369,7 @@ void main() {
   gl_PointSize = clamp(aSize * (300.0/max(dist,1.0)), 1.0, 96.0);
 
   vColorAlpha = aColorAlpha;
-  }
+}
 )GLSL";
 
 static const char* FRAG_SRC = R"GLSL(
@@ -417,13 +377,23 @@ static const char* FRAG_SRC = R"GLSL(
 in vec4 vColorAlpha;
 out vec4 FragColor;
 
+uniform sampler2D uTexture;
+uniform bool uUseTexture;
+
 void main() {
-  vec2 c = gl_PointCoord*2.0 - 1.0;
-  float r2 = dot(c,c);
-  if(r2 > 1.0) discard;
-  float soft = 1.0 - r2;
-  FragColor = vec4(vColorAlpha.rgb * vColorAlpha.a * soft, 1.0);
+  vec4 texCol = vec4(1.0);
+  
+  if (uUseTexture) {
+    texCol = texture(uTexture, gl_PointCoord);
+  } else {
+    vec2 c = gl_PointCoord * 2.0 - 1.0;
+    float r2 = dot(c, c);
+    if (r2 > 1.0) discard;
+    texCol = vec4(vec3(1.0), 1.0 - r2);
   }
+
+  FragColor = texCol * vColorAlpha;
+}
 )GLSL";
 
 static const char* FLOOR_VERT_SRC = R"GLSL(
@@ -454,7 +424,7 @@ static GLuint compileShader(GLenum type, const char* src)
     fprintf(stderr, "Blad kompilacji shadera:\n%s\n", log);
   }
   return sh;
-  }
+}
 
 static GLuint linkProgram(GLuint vs, GLuint fs)
 {
@@ -471,11 +441,10 @@ static GLuint linkProgram(GLuint vs, GLuint fs)
     fprintf(stderr, "Blad linkowania programu:\n%s\n", log);
   }
   return prog;
-  }
+}
 
 /* ---------------------------------------------------------------------
-   Kamera - patrzenie tylko przy przytrzymanym PRAWYM przycisku myszy,
-   zeby lewy klik i normalny kursor byly wolne do obslugi listy w ImGui.
+   Kamera
    --------------------------------------------------------------------- */
 struct Camera
 {
@@ -493,7 +462,7 @@ struct Camera
   }
   glm::vec3 right() const { return glm::normalize(glm::cross(front(), {0,1,0})); }
   glm::mat4 view() const { return glm::lookAt(pos, pos+front(), glm::vec3(0,1,0)); }
-  };
+};
 
 static Camera g_cam;
 static bool   g_keys[512] = {};
@@ -501,33 +470,23 @@ static double g_lastX = 400, g_lastY = 300;
 static bool   g_firstMouse = true;
 static bool   g_lookActive = false;
 static bool   g_resetRequested = false;
-static float  g_fov = 70.f; /* pole widzenia w stopniach - sterowane kolkiem myszy */
+static float  g_fov = 70.f;
 
 static void scrollCallback(GLFWwindow*, double, double yoffset)
 {
   if(ImGui::GetIO().WantCaptureMouse)
     return;
-  /* scroll w gore (yoffset>0) = przyblizenie = mniejsze FOV */
   g_fov -= float(yoffset)*3.f;
   g_fov = std::clamp(g_fov, 15.f, 100.f);
-  }
+}
 
-/* Automatyczne dopasowanie kamery do rozmiaru efektu: przesuwa kamere na
-   taka odleglosc od centrum efektu, zeby szacowany promien (estimateEffectRadius)
-   miescil sie w aktualnym polu widzenia (g_fov), z niewielkim marginesem.
-   Zachowuje dotychczasowy kierunek patrzenia wzgledem centrum (nie "skacze"
-   na losowy kat) - jedynie dostosowuje dystans i lekko centruje widok. */
 static void reframeCameraToEffect(const PfxParams& p)
 {
   float radius = estimateEffectRadius(p);
-
-  /* centrum kadru lekko przesuniete w strone glownego kierunku lotu
-     czasteczek (np. dla fontanny lecacej w gore, zeby nie centrowac
-     kamery tylko na punkcie emisji u dolu) */
   glm::vec3 center = p.shpOffset + baseDirection(p)*radius*0.4f;
 
   float distance = radius / std::tan(glm::radians(g_fov*0.5f));
-  distance *= 1.5f; /* margines, zeby efekt nie dotykal krawedzi ekranu */
+  distance *= 1.5f;
   distance = std::clamp(distance, 60.f, 4000.f);
 
   glm::vec3 dirFromCenter = g_cam.pos - center;
@@ -540,7 +499,7 @@ static void reframeCameraToEffect(const PfxParams& p)
   glm::vec3 lookDir = glm::normalize(center - g_cam.pos);
   g_cam.pitch = glm::degrees(std::asin(std::clamp(lookDir.y, -1.f, 1.f)));
   g_cam.yaw   = glm::degrees(std::atan2(lookDir.z, lookDir.x));
-  }
+}
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
 {
@@ -551,7 +510,7 @@ static void keyCallback(GLFWwindow* w, int key, int, int action, int)
 
   if(key==GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
   if(key==GLFW_KEY_R) g_resetRequested = true;
-  }
+}
 
 static void mouseButtonCallback(GLFWwindow* w, int button, int action, int)
 {
@@ -569,7 +528,7 @@ static void mouseButtonCallback(GLFWwindow* w, int button, int action, int)
     g_lookActive = false;
     glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
   }
-  }
+}
 
 static void cursorCallback(GLFWwindow*, double x, double y)
 {
@@ -581,7 +540,7 @@ static void cursorCallback(GLFWwindow*, double x, double y)
   g_cam.yaw   += float(dx)*sens;
   g_cam.pitch += float(dy)*sens;
   g_cam.pitch  = std::clamp(g_cam.pitch, -89.f, 89.f);
-  }
+}
 
 int main(int argc, char** argv)
 {
@@ -631,7 +590,7 @@ int main(int argc, char** argv)
   float floorVerts[] = {
     -R,0,-R,  R,0,-R,  R,0,R,
     -R,0,-R,  R,0,R,  -R,0,R,
-    };
+  };
   GLuint floorVao, floorVbo;
   glGenVertexArrays(1,&floorVao);
   glGenBuffers(1,&floorVbo);
@@ -669,6 +628,7 @@ int main(int argc, char** argv)
   renderBuf.reserve(MAX_PARTICLES);
 
   PfxParams   currentParams;
+  Texture2D   currentTexture;
   std::string selectedName;
   float       spawnAccum = 0.f;
   bool        autoZoom = true;
@@ -718,9 +678,69 @@ int main(int argc, char** argv)
             spawnAccum = 0.f;
             if(autoZoom)
               reframeCameraToEffect(currentParams);
+            
             printf("Zaladowano \"%s\": pps=%.1f shp=%s vel=%.1f+-%.1f lsp=%.0f+-%.0fms\n",
                    selectedName.c_str(), currentParams.ppsValue, currentParams.shpType.c_str(),
                    currentParams.velAvg, currentParams.velVar, currentParams.lspAvg, currentParams.lspVar);
+
+            // Pobieranie nadrzędnej ścieżki Gothic II
+            std::string gothicDir;
+            const char* envDir = std::getenv("GOTHIC2_DIR");
+
+            if (envDir != nullptr && envDir[0] != '\0')
+            {
+                gothicDir = envDir;
+            }
+            else
+            {
+                fs::path p(datPath);
+                while (p.has_parent_path() && p.filename() != "_Work")
+                {
+                    p = p.parent_path();
+                }
+                
+                if (p.filename() == "_Work")
+                {
+                    gothicDir = p.parent_path().string();
+                }
+                else
+                {
+                    gothicDir = fs::path(datPath).parent_path().string();
+                }
+            }
+
+            // Czyszczenie starej tekstury
+            currentTexture.free();
+
+            // --- INTEGRACJA TEXTURE LOADERA ---
+            if (!currentParams.visName.empty())
+            {
+                std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
+
+                if (!fullPath.empty())
+                {
+                    currentTexture = TextureLoader::loadFromFile(fullPath, false);
+
+                    if (currentTexture.valid)
+                    {
+                        printf("  [TextureLoader] SUKCES: Zaladowano \"%s\" (GL ID: %u, %dx%d px)\n",
+                            currentParams.visName.c_str(), currentTexture.id, currentTexture.width, currentTexture.height);
+                    }
+                    else
+                    {
+                        printf("  [TextureLoader] BLAD: Nie udalo sie zaladowac: %s\n", fullPath.c_str());
+                    }
+                }
+                else
+                {
+                    printf("  [TextureLoader] NIE ZNALAZIONO pliku dla tekstury: \"%s\" (Szukano w: %s)\n", 
+                        currentParams.visName.c_str(), gothicDir.c_str());
+                }
+            }
+            else
+            {
+              printf("  [TextureLoader] Efekt nie definiuje tekstury (vis_name_s jest puste).\n");
+            }
           }
         }
       }
@@ -802,21 +822,39 @@ int main(int argc, char** argv)
     glm::mat4 proj = glm::perspective(glm::radians(g_fov), float(fbw)/float(fbh), 1.f, 8000.f);
     glm::mat4 view = g_cam.view();
 
+    // Rysowanie podłogi
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE); /* podloga tylko jako subtelny punkt odniesienia - nigdy nie zaslania czasteczek */
+    glDepthMask(GL_FALSE);
     glUseProgram(floorProg);
     glUniformMatrix4fv(glGetUniformLocation(floorProg,"uView"),1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(floorProg,"uProj"),1,GL_FALSE,glm::value_ptr(proj));
     glBindVertexArray(floorVao);
     glDrawArrays(GL_TRIANGLES,0,6);
 
+    // Rysowanie cząsteczek
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Addytywne mieszanie kolorów
     glDepthMask(GL_FALSE);
     glUseProgram(particleProg);
     glUniformMatrix4fv(glGetUniformLocation(particleProg,"uView"),1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(particleProg,"uProj"),1,GL_FALSE,glm::value_ptr(proj));
+
+    GLint useTexLoc = glGetUniformLocation(particleProg, "uUseTexture");
+    GLint texLoc    = glGetUniformLocation(particleProg, "uTexture");
+
+    if (currentTexture.valid && currentTexture.id != 0)
+    {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, currentTexture.id);
+        glUniform1i(texLoc, 0);
+        glUniform1i(useTexLoc, 1);
+    }
+    else
+    {
+        glUniform1i(useTexLoc, 0);
+    }
+
     glBindVertexArray(pVao);
     glDrawArrays(GL_POINTS, 0, GLsizei(renderBuf.size()));
     glDepthMask(GL_TRUE);
@@ -832,10 +870,12 @@ int main(int argc, char** argv)
     glfwSetWindowTitle(win, title);
   }
 
+  currentTexture.free();
+
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
 
   glfwTerminate();
   return 0;
-  }
+}
