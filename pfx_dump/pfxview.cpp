@@ -34,6 +34,22 @@
 namespace fs = std::filesystem;
 
 /* ---------------------------------------------------------------------
+   Pomocnicze funkcje tekstowe
+   --------------------------------------------------------------------- */
+
+// Bezpieczne sprawdzanie czy str zawiera subStr (case-insensitive)
+static bool containsIgnoreCase(const std::string& str, const std::string& subStr)
+{
+  if (subStr.empty()) return true;
+  auto it = std::search(
+    str.begin(), str.end(),
+    subStr.begin(), subStr.end(),
+    [](char ch1, char ch2) { return std::tolower(ch1) == std::tolower(ch2); }
+  );
+  return it != str.end();
+}
+
+/* ---------------------------------------------------------------------
    Parsowanie parametrow efektu
    --------------------------------------------------------------------- */
 
@@ -630,6 +646,7 @@ int main(int argc, char** argv)
   PfxParams   currentParams;
   Texture2D   currentTexture;
   std::string selectedName;
+  char        searchBuffer[128] = ""; // Bufor na zapytanie wyszukiwania
   float       spawnAccum = 0.f;
   bool        autoZoom = true;
   double      lastTime = glfwGetTime();
@@ -663,9 +680,30 @@ int main(int argc, char** argv)
       ImGui::TextDisabled("Dopasuj teraz (wybierz efekt)");
     }
     ImGui::Separator();
+
+    // --- WYSZUKIWARKA ---
+    ImGui::InputText("##szukaj", searchBuffer, IM_ARRAYSIZE(searchBuffer));
+    ImGui::SameLine();
+    if(ImGui::Button("X"))
+    {
+      searchBuffer[0] = '\0'; // Wyczyszczenie wyszukiwarki
+    }
+    if (searchBuffer[0] == '\0')
+    {
+      ImGui::SameLine();
+      ImGui::TextDisabled("Szukaj...");
+    }
+
+    ImGui::Separator();
     ImGui::BeginChild("lista_efektow");
+    
+    std::string searchFilter(searchBuffer);
     for(auto& n : lib.names())
     {
+      // Filtrowanie listy według wprowadzonego tekstu
+      if(!containsIgnoreCase(n, searchFilter))
+        continue;
+
       bool isSelected = (n==selectedName);
       if(ImGui::Selectable(n.c_str(), isSelected))
       {
@@ -683,7 +721,6 @@ int main(int argc, char** argv)
                    selectedName.c_str(), currentParams.ppsValue, currentParams.shpType.c_str(),
                    currentParams.velAvg, currentParams.velVar, currentParams.lspAvg, currentParams.lspVar);
 
-            // Pobieranie nadrzędnej ścieżki Gothic II
             std::string gothicDir;
             const char* envDir = std::getenv("GOTHIC2_DIR");
 
@@ -709,10 +746,8 @@ int main(int argc, char** argv)
                 }
             }
 
-            // Czyszczenie starej tekstury
             currentTexture.free();
 
-            // --- INTEGRACJA TEXTURE LOADERA ---
             if (!currentParams.visName.empty())
             {
                 std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
@@ -822,7 +857,6 @@ int main(int argc, char** argv)
     glm::mat4 proj = glm::perspective(glm::radians(g_fov), float(fbw)/float(fbh), 1.f, 8000.f);
     glm::mat4 view = g_cam.view();
 
-    // Rysowanie podłogi
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
@@ -832,9 +866,8 @@ int main(int argc, char** argv)
     glBindVertexArray(floorVao);
     glDrawArrays(GL_TRIANGLES,0,6);
 
-    // Rysowanie cząsteczek
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Addytywne mieszanie kolorów
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthMask(GL_FALSE);
     glUseProgram(particleProg);
     glUniformMatrix4fv(glGetUniformLocation(particleProg,"uView"),1,GL_FALSE,glm::value_ptr(view));
