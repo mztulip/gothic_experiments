@@ -76,35 +76,26 @@ public:
         static char searchBuffer[128] = "";
 
         std::string searchFilter(searchBuffer);
-        std::vector<std::string> filteredNames;
+        
+        // Podział efektów na PFX oraz VFX z uwzględnieniem filtra wyszukiwania
+        std::vector<std::string> filteredPfx;
+        std::vector<std::string> filteredVfx;
+
         for (const auto& name : lib.names()) {
-            if (containsIgnoreCase(name, searchFilter)) filteredNames.push_back(name);
-        }
-
-        bool selectionChangedByKeys = false;
-        if (!ImGui::GetIO().WantTextInput && !filteredNames.empty()) {
-            int currentIndex = -1;
-            for (size_t i = 0; i < filteredNames.size(); ++i) {
-                if (filteredNames[i] == selectedName) { currentIndex = static_cast<int>(i); break; }
-            }
-
-            int newIndex = currentIndex;
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
-                newIndex = (currentIndex <= 0) ? static_cast<int>(filteredNames.size()) - 1 : currentIndex - 1;
-            else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
-                newIndex = (currentIndex < 0 || currentIndex >= static_cast<int>(filteredNames.size()) - 1) ? 0 : currentIndex + 1;
-
-            if (newIndex != currentIndex && newIndex >= 0 && newIndex < static_cast<int>(filteredNames.size())) {
-                selectedName = filteredNames[newIndex];
-                loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
-                selectionChangedByKeys = true;
+            if (containsIgnoreCase(name, searchFilter)) {
+                std::string origin = lib.getOriginFile(name);
+                if (containsIgnoreCase(origin, "VISUALFX")) {
+                    filteredVfx.push_back(name);
+                } else {
+                    filteredPfx.push_back(name);
+                }
             }
         }
 
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(340, 800), ImGuiCond_FirstUseEver);
         ImGui::Begin("Efekty (DAT)");
-        ImGui::Text("Efekty na liscie: %zu", lib.names().size());
+        ImGui::Text("Suma efektow: %zu", lib.names().size());
         ImGui::Checkbox("Auto Zoom", &autoZoom);
         ImGui::SameLine();
         if (!selectedName.empty() && ImGui::Button("Dopasuj")) ParticleSystem::reframeCamera(currentParams);
@@ -114,19 +105,35 @@ public:
         if (ImGui::Button("X")) searchBuffer[0] = '\0';
 
         ImGui::Separator();
-        ImGui::BeginChild("lista_efektow");
-        for (const auto& n : filteredNames) {
-            bool isSelected = (n == selectedName);
-            std::string label = n + " [" + lib.getOriginFile(n) + "]";
-            if (ImGui::Selectable(label.c_str(), isSelected)) {
-                if (n != selectedName) {
-                    selectedName = n;
-                    loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
-                }
+
+        // System tabów podzielony na PFX oraz VFX
+        if (ImGui::BeginTabBar("EffectTypeTabs")) {
+            
+            // --- TAB 1: PARTICLE EFFECTS ---
+            if (ImGui::BeginTabItem("ParticleFX")) {
+                handleNavKeys(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                
+                ImGui::BeginChild("lista_pfx");
+                renderEffectList(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                ImGui::EndChild();
+                
+                ImGui::EndTabItem();
             }
-            if (isSelected && selectionChangedByKeys) ImGui::SetScrollHereY(0.5f);
+
+            // --- TAB 2: VISUAL EFFECTS ---
+            if (ImGui::BeginTabItem("VisualFX")) {
+                handleNavKeys(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                
+                ImGui::BeginChild("lista_vfx");
+                renderEffectList(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                ImGui::EndChild();
+                
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
-        ImGui::EndChild();
+
         ImGui::End();
 
         /* Panel Szczegółów */
@@ -165,5 +172,48 @@ public:
             ImGui::TextDisabled("Wybierz efekt z listy, aby wyswietlic szczegoly.");
         }
         ImGui::End();
+    }
+
+private:
+    static void handleNavKeys(const std::vector<std::string>& list, std::string& selectedName, 
+                              const ParticleLibrary& lib, PfxParams& currentParams, 
+                              ParticleSystem& sys, bool autoZoom, Texture2D& currentTexture, 
+                              const std::vector<std::string>& datPaths) 
+    {
+        if (ImGui::GetIO().WantTextInput || list.empty()) return;
+
+        int currentIndex = -1;
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (list[i] == selectedName) { currentIndex = static_cast<int>(i); break; }
+        }
+
+        int newIndex = currentIndex;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
+            newIndex = (currentIndex <= 0) ? static_cast<int>(list.size()) - 1 : currentIndex - 1;
+        else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
+            newIndex = (currentIndex < 0 || currentIndex >= static_cast<int>(list.size()) - 1) ? 0 : currentIndex + 1;
+
+        if (newIndex != currentIndex && newIndex >= 0 && newIndex < static_cast<int>(list.size())) {
+            selectedName = list[newIndex];
+            loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+        }
+    }
+
+    static void renderEffectList(const std::vector<std::string>& list, std::string& selectedName, 
+                                 const ParticleLibrary& lib, PfxParams& currentParams, 
+                                 ParticleSystem& sys, bool autoZoom, Texture2D& currentTexture, 
+                                 const std::vector<std::string>& datPaths) 
+    {
+        for (const auto& n : list) {
+            bool isSelected = (n == selectedName);
+            std::string label = n + " [" + lib.getOriginFile(n) + "]";
+            if (ImGui::Selectable(label.c_str(), isSelected)) {
+                if (n != selectedName) {
+                    selectedName = n;
+                    loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                }
+            }
+            if (isSelected) ImGui::SetScrollHereY(0.5f);
+        }
     }
 };
