@@ -1,0 +1,254 @@
+asne. Poniżej masz krótką wersję „do zapisania”, bez zagłębiania się w szczegóły implementacji.
+Hierarchia VFX w VISUALFX.DAT
+
+W VISUALFX.DAT mamy symbole. Symbol może być:
+
+    instancją VFX,
+    klasą,
+    polem klasy,
+    innym typem symbolu.
+
+Najważniejsza jest relacja:
+
+symbol -> parent -> parent -> ...
+
+1. Przykład VFX
+
+Dla:
+
+SPELLFX_BOLT
+
+hierarchia wygląda tak:
+
+SPELLFX_BOLT
+    ↓
+CFX_BASE_PROTO
+    ↓
+CFX_BASE
+
+Czyli:
+
+SPELLFX_BOLT
+
+jest instancją/prototypem, który korzysta z:
+
+CFX_BASE_PROTO
+
+a CFX_BASE_PROTO bazuje na:
+
+CFX_BASE
+
+2. index i parent
+
+Każdy symbol ma swój index.
+
+Przykład:
+
+SPELLFX_BOLT
+index = 585
+parent = 82
+
+Szukamy symbolu 82:
+
+82 = CFX_BASE_PROTO
+
+Następnie:
+
+CFX_BASE_PROTO
+index = 82
+parent = 35
+
+Szukamy 35:
+
+35 = CFX_BASE
+
+I:
+
+CFX_BASE
+parent = 4294967295
+
+oznacza brak dalszego rodzica.
+
+Czyli:
+
+585 SPELLFX_BOLT
+       ↓
+82  CFX_BASE_PROTO
+       ↓
+35  CFX_BASE
+       ↓
+    koniec
+
+3. count oznacza liczbę pól
+
+Przykład:
+
+CFX_BASE
+index = 35
+count = 46
+
+Oznacza to, że po symbolu CFX_BASE znajduje się 46 symboli jego pól.
+
+Czyli:
+
+CFX_BASE
+    ↓
+CFX_BASE.VISNAME_S
+CFX_BASE.VISSIZE_S
+CFX_BASE.VISALPHA
+CFX_BASE.VISALPHABLENDFUNC_S
+...
+CFX_BASE.SECSPERDAMAGE
+
+Analogicznie:
+
+C_PARTICLEFXEMITKEY
+index = 2
+count = 32
+
+ma 32 pola:
+
+C_PARTICLEFXEMITKEY.VISNAME_S
+C_PARTICLEFXEMITKEY.VISSIZESCALE
+C_PARTICLEFXEMITKEY.SCALEDURATION
+...
+C_PARTICLEFXEMITKEY.EMFXLIFESPAN
+
+4. Dlaczego VFX może mieć count = 0?
+
+Na przykład:
+
+SPELLFX_BOLT
+count = 0
+
+Nie oznacza to, że VFX nie ma parametrów.
+
+Oznacza tylko:
+
+    SPELLFX_BOLT nie definiuje własnych pól.
+
+Pola bierze z klasy nadrzędnej:
+
+SPELLFX_BOLT
+    ↓
+CFX_BASE_PROTO
+    ↓
+CFX_BASE
+
+A właśnie CFX_BASE posiada 46 pól.
+
+Dlatego ZenKit może później wypełnić:
+
+inst->vis_name_s
+inst->vis_alpha
+inst->em_trj_mode_s
+inst->em_trj_target_range
+...
+
+5. ParticleFX działa podobnie
+
+Dla:
+
+SPELLFX_BOLT_KEY_CAST
+
+mamy:
+
+SPELLFX_BOLT_KEY_CAST
+    ↓
+C_PARTICLEFXEMITKEY
+
+A:
+
+C_PARTICLEFXEMITKEY
+
+ma 32 pola.
+
+Dlatego:
+
+SPELLFX_BOLT_KEY_CAST
+
+jest konkretną instancją:
+
+C_PARTICLEFXEMITKEY
+
+6. Co robi inspectInstance()
+
+Funkcja dostaje:
+
+inspectInstance(sym, sc);
+
+Następnie:
+
+1. Znajduje parent
+        ↓
+2. Sprawdza nazwę parenta
+        ↓
+3. Rozpoznaje typ
+        ↓
+4. Jeśli zna typ → może utworzyć odpowiednią strukturę ZenKit
+        ↓
+5. Wypisuje pola klasy
+
+Przykład:
+
+SPELLFX_BOLT
+    ↓
+CFX_BASE_PROTO
+
+Funkcja mówi:
+
+Rozpoznano CFX_BASE_PROTO
+
+Natomiast:
+
+JAKAŚ_NOWA_KLASA
+    ↓
+CFX_SOMETHING
+
+jeśli jej nie znamy:
+
+NIEZNANA KLASA!
+
+ale nadal wypisujemy jej pola.
+7. Hierarchię można zapamiętać jako drzewko
+
+Najprościej:
+
+                CFX_BASE
+                   ↑
+             CFX_BASE_PROTO
+                   ↑
+              SPELLFX_BOLT
+
+oraz:
+
+        C_PARTICLEFXEMITKEY
+                   ↑
+       SPELLFX_BOLT_KEY_CAST
+
+Strzałka w górę oznacza parent.
+8. Najważniejsza rzecz
+
+Nie powinniśmy zakładać:
+
+VFX → zawsze CFX_BASE_PROTO
+
+albo:
+
+VFX → zawsze jedna konkretna klasa
+
+Lepiej traktować to ogólnie:
+
+INSTANCE
+   ↓
+PARENT
+   ↓
+PARENT
+   ↓
+PARENT
+   ↓
+...
+
+i przechodzić hierarchię automatycznie.
+
+Dzięki temu później możemy obsłużyć nowe klasy VFX/PFX bez dopisywania kolejnych ręcznych ifów.

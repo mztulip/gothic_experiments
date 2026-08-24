@@ -12,6 +12,106 @@
 class VfxLoader {
 public:
 
+static void dumpEffectBase(const zenkit::IEffectBase& v)
+{
+    std::cout << "\n========== IEffectBase ==========\n";
+
+    std::cout
+        << "VIS:\n"
+        << "  name=" << v.vis_name_s
+        << " size=" << v.vis_size_s
+        << " alpha=" << v.vis_alpha
+        << " blend=" << v.vis_alpha_blend_func_s
+        << " fps=" << v.vis_tex_ani_fps
+        << " loop=" << v.vis_tex_ani_is_looping
+        << "\n";
+
+    std::cout
+        << "TRAJECTORY:\n"
+        << "  mode=" << v.em_trj_mode_s
+        << " origin=" << v.em_trj_origin_node
+        << " target=" << v.em_trj_target_node
+        << " range=" << v.em_trj_target_range
+        << " azi=" << v.em_trj_target_azi
+        << " elev=" << v.em_trj_target_elev
+        << "\n";
+
+    std::cout
+        << "  keys=" << v.em_trj_num_keys
+        << " keysVar=" << v.em_trj_num_keys_var
+        << " elevVar=" << v.em_trj_angle_elev_var
+        << " headVar=" << v.em_trj_angle_head_var
+        << " distVar=" << v.em_trj_key_dist_var
+        << "\n";
+
+    std::cout
+        << "  loop=" << v.em_trj_loop_mode_s
+        << " ease=" << v.em_trj_ease_func_s
+        << " easeVel=" << v.em_trj_ease_vel
+        << " updateDelay=" << v.em_trj_dyn_update_delay
+        << " targetOnly=" << v.em_trj_dyn_update_target_only
+        << "\n";
+
+    std::cout
+        << "EFFECT:\n"
+        << "  create=" << v.em_fx_create_s
+        << " investOrigin=" << v.em_fx_invest_origin_s
+        << " investTarget=" << v.em_fx_invest_target_s
+        << " triggerDelay=" << v.em_fx_trigger_delay
+        << " downTrj=" << v.em_fx_create_down_trj
+        << "\n";
+
+    std::cout
+        << "COLLISION:\n"
+        << "  dynAction=" << v.em_action_coll_dyn_s
+        << " statAction=" << v.em_action_coll_stat_s
+        << " statFx=" << v.em_fx_coll_stat_s
+        << " dynFx=" << v.em_fx_coll_dyn_s
+        << " statAlign=" << v.em_fx_coll_stat_align_s
+        << " dynAlign=" << v.em_fx_coll_dyn_align_s
+        << " dynPerc=" << v.em_fx_coll_dyn_perc_s
+        << "\n";
+
+    std::cout
+        << "PHYSICS:\n"
+        << "  lifespan=" << v.em_fx_lifespan
+        << " checkCollision=" << v.em_check_collision
+        << " adjustShape=" << v.em_adjust_shp_to_origin
+        << " nextKeyDuration=" << v.em_invest_next_key_duration
+        << " gravity=" << v.em_fly_gravity
+        << " rotVel=" << v.em_self_rot_vel_s
+        << "\n";
+
+    std::cout
+        << "AUDIO/LIGHT:\n"
+        << "  light=" << v.light_preset_name
+        << " sfx=" << v.sfx_id
+        << " ambient=" << v.sfx_is_ambient
+        << "\n";
+
+    std::cout
+        << "MAGIC:\n"
+        << "  assess=" << v.send_assess_magic
+        << " secsPerDamage=" << v.secs_per_damage
+        << "\n";
+
+    std::cout << "USER:\n";
+
+    for (std::size_t i = 0;
+         i < zenkit::IEffectBase::user_string_count;
+         ++i)
+    {
+        std::cout
+            << "  [" << i << "] = "
+            << v.user_string[i]
+            << "\n";
+    }
+
+    std::cout
+        << "=================================\n";
+}
+
+
 static void inspectInstance(
     zenkit::DaedalusSymbol* instSym,
     const std::shared_ptr<LoadedScript>& sc)
@@ -38,29 +138,15 @@ static void inspectInstance(
         << "============================================================\n";
 
     std::cout
-        << "  name          = "
-        << instSym->name()
-        << "\n"
-
-        << "  index         = "
-        << instSym->index()
-        << "\n"
-
-        << "  type          = "
-        << static_cast<int>(instSym->type())
-        << "\n"
-
-        << "  count         = "
-        << instSym->count()
-        << "\n"
-
-        << "  parent_index  = "
-        << instSym->parent()
-        << "\n";
+        << "  name          = " << instSym->name() << "\n"
+        << "  index         = " << instSym->index() << "\n"
+        << "  type          = " << static_cast<int>(instSym->type()) << "\n"
+        << "  count         = " << instSym->count() << "\n"
+        << "  parent_index  = " << instSym->parent() << "\n";
 
 
     // ============================================================
-    // DEBUG PARENT
+    // PARENT
     // ============================================================
 
     std::cout
@@ -70,25 +156,11 @@ static void inspectInstance(
     if (parentSym)
     {
         std::cout
-            << "  name          = "
-            << parentSym->name()
-            << "\n"
-
-            << "  index         = "
-            << parentSym->index()
-            << "\n"
-
-            << "  type          = "
-            << static_cast<int>(parentSym->type())
-            << "\n"
-
-            << "  count         = "
-            << parentSym->count()
-            << "\n"
-
-            << "  parent_index  = "
-            << parentSym->parent()
-            << "\n";
+            << "  name          = " << parentSym->name() << "\n"
+            << "  index         = " << parentSym->index() << "\n"
+            << "  type          = " << static_cast<int>(parentSym->type()) << "\n"
+            << "  count         = " << parentSym->count() << "\n"
+            << "  parent_index  = " << parentSym->parent() << "\n";
     }
     else
     {
@@ -98,48 +170,31 @@ static void inspectInstance(
 
 
     // ============================================================
-    // DEBUG GRANDPARENT
+    // GRANDPARENT
     // ============================================================
+
+    auto* grandParent =
+        parentSym
+            ? sc->vm->find_symbol_by_index(parentSym->parent())
+            : nullptr;
 
     std::cout
         << "\n"
         << "========== DEBUG GRANDPARENT ==========\n";
 
-    if (parentSym)
+    if (grandParent)
     {
-        auto* grandParent =
-            sc->vm->find_symbol_by_index(
-                parentSym->parent()
-            );
-
-        if (grandParent)
-        {
-            std::cout
-                << "  name          = "
-                << grandParent->name()
-                << "\n"
-
-                << "  index         = "
-                << grandParent->index()
-                << "\n"
-
-                << "  type          = "
-                << static_cast<int>(grandParent->type())
-                << "\n"
-
-                << "  count         = "
-                << grandParent->count()
-                << "\n"
-
-                << "  parent_index  = "
-                << grandParent->parent()
-                << "\n";
-        }
-        else
-        {
-            std::cout
-                << "  grandParent   = nullptr\n";
-        }
+        std::cout
+            << "  name          = " << grandParent->name() << "\n"
+            << "  index         = " << grandParent->index() << "\n"
+            << "  type          = " << static_cast<int>(grandParent->type()) << "\n"
+            << "  count         = " << grandParent->count() << "\n"
+            << "  parent_index  = " << grandParent->parent() << "\n";
+    }
+    else
+    {
+        std::cout
+            << "  grandParent   = nullptr\n";
     }
 
     std::cout
@@ -147,449 +202,49 @@ static void inspectInstance(
 
 
     // ============================================================
-    // BRAK PARENT
+    // BRAK KLASY
     // ============================================================
 
     if (!parentSym)
     {
         std::cout
-            << "[VFX Loader] Brak parentSym - koniec inspekcji\n";
+            << "\n"
+            << "  [VFX Loader] Nieznana klasa!\n"
+            << "  Nie można określić pól klasy.\n"
+            << std::endl;
 
         return;
     }
 
 
     // ============================================================
-    // C_PARTICLEFXEMITKEY
+    // ROZPOZNANIE KLASY
     // ============================================================
 
-    if (parentName == "C_PARTICLEFXEMITKEY")
+    const bool isParticleKey =
+        parentName == "C_PARTICLEFXEMITKEY";
+
+    const bool isEffectBase =
+        parentName == "C_XIVISUALFX" ||
+        parentName == "C_XIVISUALFX_D" ||
+        parentName == "CFX_BASE_PROTO";
+
+
+    if (isParticleKey)
     {
         std::cout
             << "\n"
             << "  [VFX Loader] Rozpoznano:\n"
             << "  C_PARTICLEFXEMITKEY\n";
 
-        std::cout
-            << "  [DEBUG] IParticleEffectEmitKey NIE jest inicjalizowany\n"
-            << "  [DEBUG] Wypisujemy tylko symbole pól klasy\n";
-
-
-        // ========================================================
-        // INFORMACJE O KLASIE
-        // ========================================================
-
-        const auto classIndex =
-            parentSym->index();
-
-        const auto fieldCount =
-            parentSym->count();
-
-        std::cout
-            << "\n"
-            << "  ===== POLA C_PARTICLEFXEMITKEY =====\n"
-
-            << "  class index = "
-            << classIndex
-            << "\n"
-
-            << "  class count = "
-            << fieldCount
-            << "\n";
-
-
-        // ========================================================
-        // POLA KLASY
-        //
-        // C_PARTICLEFXEMITKEY:
-        //
-        // index 2 = klasa
-        // index 3..34 = 32 pola
-        //
-        // Nie szukamy po nazwie.
-        // Idziemy bezpośrednio po indeksach.
-        // ========================================================
-
-        const auto firstField =
-            classIndex + 1;
-
-        const auto lastField =
-            firstField + fieldCount;
-
-
-        std::size_t found = 0;
-
-
-        for (auto i = firstField;
-             i < lastField;
-             ++i)
-        {
-            auto* field =
-                sc->vm->find_symbol_by_index(i);
-
-            if (!field)
-            {
-                std::cout
-                    << "\n"
-                    << "  [ERROR] Brak symbolu dla index="
-                    << i
-                    << "\n";
-
-                continue;
-            }
-
-
-            // ====================================================
-            // DODATKOWA WERYFIKACJA
-            // ====================================================
-
-            if (field->parent() != classIndex)
-            {
-                std::cout
-                    << "\n"
-                    << "  [WARNING] Symbol index="
-                    << i
-                    << " nie ma oczekiwanego parenta!\n"
-
-                    << "      expected parent = "
-                    << classIndex
-                    << "\n"
-
-                    << "      actual parent   = "
-                    << field->parent()
-                    << "\n";
-            }
-
-
-            ++found;
-
-
-            // ====================================================
-            // PRINT POLA
-            // ====================================================
-
-            std::cout
-                << "\n"
-                << "  FIELD #"
-                << found
-                << "\n"
-
-                << "    index  = "
-                << field->index()
-                << "\n"
-
-                << "    name   = "
-                << field->name()
-                << "\n"
-
-                << "    type   = "
-                << static_cast<int>(field->type())
-                << "\n"
-
-                << "    count  = "
-                << field->count()
-                << "\n"
-
-                << "    parent = "
-                << field->parent()
-                << "\n";
-        }
-
-
-        // ========================================================
-        // PODSUMOWANIE
-        // ========================================================
-
-        std::cout
-            << "\n"
-            << "  --------------------------------------\n"
-
-            << "  [DEBUG] Znaleziono pól: "
-            << found
-            << " / "
-            << fieldCount
-            << "\n"
-
-            << "  --------------------------------------\n"
-
-            << "  ===== KONIEC C_PARTICLEFXEMITKEY =====\n"
-            << std::endl;
-
-
-        return;
-    }
-
-
-    // ============================================================
-    // CFX_BASE_PROTO
-    // ============================================================
-
-    if (parentName == "CFX_BASE_PROTO")
-    {
-        std::cout
-            << "\n"
-            << "  [VFX Loader] Rozpoznano:\n"
-            << "  CFX_BASE_PROTO\n";
-
-        std::cout
-            << "  [DEBUG] Próba utworzenia IEffectBase...\n";
-
         auto inst =
-            std::make_shared<zenkit::IEffectBase>();
+            std::make_shared<zenkit::IParticleEffectEmitKey>();
 
         std::cout
-            << "  [DEBUG] IEffectBase utworzony\n";
-
-
-        // ========================================================
-        // INIT
-        // ========================================================
-
-        try
-        {
-            sc->vm->init_instance(
-                inst,
-                instSym
-            );
-
-            std::cout
-                << "  [DEBUG] init_instance OK\n";
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr
-                << "  [ERROR] init_instance: "
-                << e.what()
-                << "\n";
-
-            return;
-        }
-
-
-        // ========================================================
-        // IEffectBase
-        // ========================================================
-
-        std::cout
-            << "\n"
-            << "  ===== IEffectBase =====\n"
-
-            << "  vis_name_s                 = \""
-            << inst->vis_name_s
-            << "\"\n"
-
-            << "  vis_size_s                 = \""
-            << inst->vis_size_s
-            << "\"\n"
-
-            << "  vis_alpha                  = "
-            << inst->vis_alpha
-            << "\n"
-
-            << "  vis_alpha_blend_func_s     = \""
-            << inst->vis_alpha_blend_func_s
-            << "\"\n"
-
-            << "  vis_tex_ani_fps            = "
-            << inst->vis_tex_ani_fps
-            << "\n"
-
-            << "  vis_tex_ani_is_looping     = "
-            << inst->vis_tex_ani_is_looping
-            << "\n"
-
-            << "  em_trj_mode_s              = \""
-            << inst->em_trj_mode_s
-            << "\"\n"
-
-            << "  em_trj_origin_node         = \""
-            << inst->em_trj_origin_node
-            << "\"\n"
-
-            << "  em_trj_target_node         = \""
-            << inst->em_trj_target_node
-            << "\"\n"
-
-            << "  em_trj_target_range        = "
-            << inst->em_trj_target_range
-            << "\n"
-
-            << "  em_trj_target_azi          = "
-            << inst->em_trj_target_azi
-            << "\n"
-
-            << "  em_trj_target_elev         = "
-            << inst->em_trj_target_elev
-            << "\n"
-
-            << "  em_trj_num_keys            = "
-            << inst->em_trj_num_keys
-            << "\n"
-
-            << "  em_trj_num_keys_var        = "
-            << inst->em_trj_num_keys_var
-            << "\n"
-
-            << "  em_trj_angle_elev_var      = "
-            << inst->em_trj_angle_elev_var
-            << "\n"
-
-            << "  em_trj_angle_head_var      = "
-            << inst->em_trj_angle_head_var
-            << "\n"
-
-            << "  em_trj_key_dist_var        = "
-            << inst->em_trj_key_dist_var
-            << "\n"
-
-            << "  em_trj_loop_mode_s         = \""
-            << inst->em_trj_loop_mode_s
-            << "\"\n"
-
-            << "  em_trj_ease_func_s         = \""
-            << inst->em_trj_ease_func_s
-            << "\"\n"
-
-            << "  em_trj_ease_vel            = "
-            << inst->em_trj_ease_vel
-            << "\n"
-
-            << "  em_trj_dyn_update_delay    = "
-            << inst->em_trj_dyn_update_delay
-            << "\n"
-
-            << "  em_trj_dyn_update_target_only = "
-            << inst->em_trj_dyn_update_target_only
-            << "\n"
-
-            << "  em_fx_create_s              = \""
-            << inst->em_fx_create_s
-            << "\"\n"
-
-            << "  em_fx_invest_origin_s       = \""
-            << inst->em_fx_invest_origin_s
-            << "\"\n"
-
-            << "  em_fx_invest_target_s       = \""
-            << inst->em_fx_invest_target_s
-            << "\"\n"
-
-            << "  em_fx_trigger_delay         = "
-            << inst->em_fx_trigger_delay
-            << "\n"
-
-            << "  em_fx_create_down_trj       = "
-            << inst->em_fx_create_down_trj
-            << "\n"
-
-            << "  em_action_coll_dyn_s        = \""
-            << inst->em_action_coll_dyn_s
-            << "\"\n"
-
-            << "  em_action_coll_stat_s       = \""
-            << inst->em_action_coll_stat_s
-            << "\"\n"
-
-            << "  em_fx_coll_stat_s           = \""
-            << inst->em_fx_coll_stat_s
-            << "\"\n"
-
-            << "  em_fx_coll_dyn_s            = \""
-            << inst->em_fx_coll_dyn_s
-            << "\"\n"
-
-            << "  em_fx_coll_stat_align_s     = \""
-            << inst->em_fx_coll_stat_align_s
-            << "\"\n"
-
-            << "  em_fx_coll_dyn_align_s      = \""
-            << inst->em_fx_coll_dyn_align_s
-            << "\"\n"
-
-            << "  em_fx_lifespan              = "
-            << inst->em_fx_lifespan
-            << "\n"
-
-            << "  em_check_collision          = "
-            << inst->em_check_collision
-            << "\n"
-
-            << "  em_adjust_shp_to_origin     = "
-            << inst->em_adjust_shp_to_origin
-            << "\n"
-
-            << "  em_invest_next_key_duration = "
-            << inst->em_invest_next_key_duration
-            << "\n"
-
-            << "  em_fly_gravity              = "
-            << inst->em_fly_gravity
-            << "\n"
-
-            << "  em_self_rot_vel_s           = \""
-            << inst->em_self_rot_vel_s
-            << "\"\n";
-
-
-        // ========================================================
-        // USER STRING
-        // ========================================================
-
-        for (std::size_t i = 0;
-             i < zenkit::IEffectBase::user_string_count;
-             ++i)
-        {
-            std::cout
-                << "  user_string["
-                << i
-                << "] = \""
-                << inst->user_string[i]
-                << "\"\n";
-        }
-
-
-        // ========================================================
-        // RESZTA
-        // ========================================================
-
-        std::cout
-            << "  light_preset_name       = \""
-            << inst->light_preset_name
-            << "\"\n"
-
-            << "  sfx_id                  = \""
-            << inst->sfx_id
-            << "\"\n"
-
-            << "  sfx_is_ambient          = "
-            << inst->sfx_is_ambient
-            << "\n"
-
-            << "  send_assess_magic       = "
-            << inst->send_assess_magic
-            << "\n"
-
-            << "  secs_per_damage         = "
-            << inst->secs_per_damage
-            << "\n"
-
-            << "  em_fx_coll_dyn_perc_s   = \""
-            << inst->em_fx_coll_dyn_perc_s
-            << "\"\n"
-
-            << "  =============================\n"
-            << std::endl;
-
-        return;
+            << "  [DEBUG] IParticleEffectEmitKey utworzony\n"
+            << "  [DEBUG] init_instance pominięte\n";
     }
-
-
-    // ============================================================
-    // C_XIVISUALFX / C_XIVISUALFX_D
-    // ============================================================
-
-    if (parentName == "C_XIVISUALFX" ||
-        parentName == "C_XIVISUALFX_D")
+    else if (isEffectBase)
     {
         std::cout
             << "\n"
@@ -598,20 +253,15 @@ static void inspectInstance(
             << parentName
             << "\n";
 
-        std::cout
-            << "  [DEBUG] Tworzenie IEffectBase...\n";
-
         auto inst =
             std::make_shared<zenkit::IEffectBase>();
 
         try
         {
-            sc->vm->init_instance(
-                inst,
-                instSym
-            );
+            sc->vm->init_instance(inst, instSym);
 
             std::cout
+                << "  [DEBUG] IEffectBase utworzony\n"
                 << "  [DEBUG] init_instance OK\n";
         }
         catch (const std::exception& e)
@@ -620,71 +270,38 @@ static void inspectInstance(
                 << "  [ERROR] init_instance: "
                 << e.what()
                 << "\n";
-
-            return;
         }
+    }
+    else
+    {
+        // ========================================================
+        // NIEZNANA KLASA
+        // ========================================================
 
         std::cout
             << "\n"
-            << "  ===== IEffectBase =====\n"
+            << "  [VFX Loader] NIEZNANA KLASA!\n"
+            << "  class = "
+            << parentName
+            << "\n";
 
-            << "  vis_name_s          = \""
-            << inst->vis_name_s
-            << "\"\n"
-
-            << "  vis_size_s          = \""
-            << inst->vis_size_s
-            << "\"\n"
-
-            << "  vis_alpha           = "
-            << inst->vis_alpha
-            << "\n"
-
-            << "  em_trj_target_range = "
-            << inst->em_trj_target_range
-            << "\n"
-
-            << "  =========================\n"
-            << std::endl;
-
-        return;
+        std::cout
+            << "  [VFX Loader] Wypisuję wszystkie pola klasy.\n";
     }
 
 
     // ============================================================
-    // INNY TYP
+    // WSZYSTKIE POLA KLASY
+    //
+    // To jest wspólne dla KAŻDEJ klasy.
+    // Dzięki temu nawet nieznane klasy są w pełni widoczne.
     // ============================================================
 
     std::cout
         << "\n"
-        << "  ============================================\n"
-        << "  NIEZNANY TYP RODZICA\n"
-        << "  ============================================\n"
-
-        << "  parent name  = "
+        << "  ===== POLA KLASY "
         << parentName
-        << "\n"
-
-        << "  parent index = "
-        << parentSym->index()
-        << "\n"
-
-        << "  parent type  = "
-        << static_cast<int>(parentSym->type())
-        << "\n"
-
-        << "  parent count = "
-        << parentSym->count()
-        << "\n";
-
-
-    // ============================================================
-    // DLA NIEZNANEGO TYPU TEŻ WYPISUJEMY POLA
-    // ============================================================
-
-    std::cout
-        << "\n"
-        << "  ===== POLA KLASY =====\n";
+        << " =====\n";
 
     std::size_t found = 0;
 
@@ -724,19 +341,19 @@ static void inspectInstance(
             << "  FIELD #"
             << found
 
-            << " index="
+            << "  index="
             << field->index()
 
-            << " type="
+            << "  type="
             << static_cast<int>(field->type())
 
-            << " count="
+            << "  count="
             << field->count()
 
-            << " name="
+            << "  name="
             << field->name()
 
-            << " parent="
+            << "  parent="
             << field->parent()
 
             << "\n";
