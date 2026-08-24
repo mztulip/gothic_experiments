@@ -147,22 +147,74 @@ public:
                 bool isVFX = containsIgnoreCase(lib.getOriginFile(selectedName), "VISUALFX");
 
                 if (isVFX) {
-                    /* --- INSPEKTOR VISUAL FX --- */
-                    ImGui::TextColored(ImVec4(0.9f, 0.4f, 1.0f, 1.0f), "--- VISUAL FX (C_XIVISUALFX) ---");
-                    ImGui::Text("Nazwa Wizualna / Model: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());
+                    /* --- INSPEKTOR VISUAL FX (C_XIVISUALFX / C_PARTICLEFXEMITKEY) --- */
+                    ImGui::TextColored(ImVec4(0.9f, 0.4f, 1.0f, 1.0f), "--- VISUAL FX (DAEDALUS) ---");
                     
-                    if (!currentParams.loadedTexturePath.empty()) {
-                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Podpięta tekstura:");
-                        ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
-                        if (currentTexture.valid && currentTexture.id != 0) {
-                            ImGui::Text("Rozmiar GL: %dx%d px", currentTexture.width, currentTexture.height);
-                            ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(96, 96));
-                        }
+                    std::string vis = currentParams.visName;
+                    
+                    // 1. TYP WIZUALIÓW (Klasyfikacja po rozszerzeniu)
+                    if (containsIgnoreCase(vis, ".3ds")) {
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.6f, 1.0f), "Typ zasobu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::Text("Siatka 3D (Model Mesh .3DS)");
+                        
+                        ImGui::Text("Plik Modelu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", vis.c_str());
+
+                    } else if (containsIgnoreCase(vis, ".pfx")) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Typ zasobu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::Text("System Cząsteczek (.PFX)");
+                        
+                        ImGui::Text("Podpięty PFX:"); 
+                        ImGui::SameLine(); 
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", vis.c_str());
+
+                    } else if (containsIgnoreCase(vis, ".mms") || containsIgnoreCase(vis, ".morph")) {
+                        ImGui::TextColored(ImVec4(0.8f, 0.4f, 1.0f, 1.0f), "Typ zasobu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::Text("Animacja Morph Mesh (.MMS)");
+                        
+                        ImGui::Text("Plik Animacji:"); 
+                        ImGui::SameLine(); 
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", vis.c_str());
+
+                    } else if (containsIgnoreCase(vis, ".tga")) {
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Typ zasobu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::Text("Pojedyncza Tekstura / Duszka (.TGA)");
+
                     } else {
-                        ImGui::TextDisabled("Brak tekstury / Wykorzystuje model .3DS lub efekt logiczny.");
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Typ zasobu:"); 
+                        ImGui::SameLine(); 
+                        ImGui::Text(vis.empty() ? "Logiczny / Kontener (Brak wizualizatora)" : "Niestandardowy (%s)", vis.c_str());
                     }
 
-                } else {
+                    ImGui::Separator();
+
+                    // 2. PODGLĄD TEKSTURY (Jeśli istnieje podpięty plik graficzny)
+                    if (!currentParams.loadedTexturePath.empty() && currentTexture.valid && currentTexture.id != 0) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Załadowana Tekstura:");
+                        ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
+                        ImGui::Text("Wymiary: %dx%d px", currentTexture.width, currentTexture.height);
+                        ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(96, 96));
+                    } else if (containsIgnoreCase(vis, ".3ds")) {
+                        ImGui::TextWrapped("Tekstury są nałożone bezpośrednio na materiały wewnątrz pliku 3DS.");
+                    } else {
+                        ImGui::TextDisabled("Ten efekt VisualFX nie posiada bezpośredniej tekstury 2D.");
+                    }
+
+                    // 3. Opcjonalne dodatkowe parametry VFX (Trajektoria / SFX)
+                    if (!currentParams.emTrjMode.empty()) {
+                        ImGui::Separator();
+                        ImGui::Text("Trajektoria (emTrjMode): %s", currentParams.emTrjMode.c_str());
+                    }
+                    if (!currentParams.userString.empty()) {
+                        ImGui::Text("Dodatkowe dane (userString): %s", currentParams.userString.c_str());
+                    }
+                }
+                else {
                     /* --- INSPEKTOR PARTICLE FX --- */
                     ImGui::TextUnformatted("--- TEKSTURA ---");
                     ImGui::Text("Deklarowana w Daedalus: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());

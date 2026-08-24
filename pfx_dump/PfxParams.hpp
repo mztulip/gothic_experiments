@@ -14,6 +14,11 @@ struct PfxParams
     float       ppsValue = 0.f;
     std::string visName;
 
+    // Pole dla VisualFX (C_XIVISUALFX / C_PARTICLEFXEMITKEY)
+    std::string emTrjMode;     // Np. "FIXED", "TARGET", "LINE"
+    std::string userString;    // Dodatkowe wpisy (skrypty/SFX/ścieżki)
+    glm::vec3   visSize = glm::vec3(1.f); // Rozmiar/Skala wizualizacji
+
     std::string shpType;
     glm::vec3   shpOffset = glm::vec3(0.f);
     glm::vec3   shpDim    = glm::vec3(0.f);
@@ -43,6 +48,8 @@ struct PfxParams
         originDatFile.clear();
         loadedTexturePath.clear();
         visName.clear();
+        emTrjMode.clear();
+        userString.clear();
         shpType.clear();
         dirMode.clear();
 
@@ -52,6 +59,7 @@ struct PfxParams
         dirAngleHead = 0.f; dirAngleHeadVar = 0.f;
         dirAngleElev = 0.f; dirAngleElevVar = 0.f;
 
+        visSize = glm::vec3(1.f);
         shpOffset = glm::vec3(0.f);
         shpDim = glm::vec3(0.f);
         gravity = glm::vec3(0.f);
@@ -129,5 +137,16 @@ inline PfxParams extractParams(const zenkit::IParticleEffect& p)
     out.alphaStart      = std::clamp(p.vis_alpha_start / 255.f, 0.f, 1.f);
     out.alphaEnd        = std::clamp(p.vis_alpha_end / 255.f,   0.f, 1.f);
 
+    return out;
+}
+
+// Funkcja wyciągająca właściwości z instancji IEffectBase (VISUALFX.DAT)
+inline PfxParams extractParamsFromVfx(const zenkit::IEffectBase& v)
+{
+    PfxParams out;
+    out.visName    = v.vis_name_s;
+    out.emTrjMode  = v.em_trj_mode_s;
+    out.userString = v.user_string[0]; // Tablica C-style: bierzemy pierwszy element
+    out.visSize    = parseVec3(v.vis_size_s, glm::vec3(1.f));
     return out;
 }
