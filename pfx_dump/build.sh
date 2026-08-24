@@ -10,6 +10,9 @@ IMGUI_BUILD_DIR="$SCRIPT_DIR/.imgui_build"
 
 CXX="${CXX:-g++}"
 
+# Flagi UTF-8 dla kompilatora (GCC / Clang)
+UTF8_FLAGS="-finput-charset=UTF-8 -fexec-charset=UTF-8"
+
 # --rebuild-zenkit wymusza pelna przebudowe ZenKit, nawet jesli biblioteki
 # juz istnieja (przydatne po zmianie samego ZenKit, np. git pull).
 REBUILD_ZENKIT=0
@@ -95,7 +98,7 @@ if [[ "$needs_imgui_rebuild" == "1" ]]; then
   for src in "${IMGUI_SRC[@]}"; do
     obj="$IMGUI_BUILD_DIR/$(basename "${src%.cpp}").o"
     echo "  CXX $src"
-    "$CXX" -std=c++20 -O2 -c "$src" -o "$obj" $IMGUI_INCLUDES
+    "$CXX" -std=c++20 $UTF8_FLAGS -O2 -c "$src" -o "$obj" $IMGUI_INCLUDES
     obj_files+=("$obj")
   done
 
@@ -122,7 +125,7 @@ build_program() {
   echo " Building $out"
   echo "=========================================="
 
-  "$CXX" -std=c++20 "$src" \
+  "$CXX" -std=c++20 $UTF8_FLAGS "$src" \
     -I"$ZENKIT_DIR/include" \
     -I"$ZENKIT_DIR/vendor/glm" \
     $IMGUI_INCLUDES \
@@ -145,5 +148,3 @@ echo "Run:"
 echo "  ./pfxview"
 echo "  ./pfxproto"
 echo
-echo "(sciezke do PARTICLEFX.DAT mozna tez podac jawnie jako argument,"
-echo " w przeciwnym razie program uzyje zmiennej srodowiskowej GOTHIC2_DIR)"

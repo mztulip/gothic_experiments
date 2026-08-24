@@ -704,11 +704,60 @@ int main(int argc, char** argv)
   glVertexAttribPointer(2,4,GL_FLOAT,GL_FALSE,sizeof(ParticleVertex),(void*)offsetof(ParticleVertex,colorAlpha));
   glEnableVertexAttribArray(2);
 
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGui::StyleColorsDark();
-  ImGui_ImplGlfw_InitForOpenGL(win, true);
-  ImGui_ImplOpenGL3_Init("#version 330");
+IMGUI_CHECKVERSION();
+ImGui::CreateContext();
+ImGuiIO& io = ImGui::GetIO();
+
+// Zakres glifów dla polskich znaków (Latin-1 + Latin Extended-A)
+static const ImWchar polish_ranges[] = {
+    0x0020, 0x00FF, // Basic Latin + Latin Supplement
+    0x0100, 0x017F, // Latin Extended-A (ą, ć, ę, ł, ń, ó, ś, ź, ż)
+    0,
+};
+
+const char* fontPaths[] = {
+    // Arch Linux (standardowe lokalizacje)
+    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/gnu-free/FreeSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    
+    // Debian / Ubuntu
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    
+    // Windows
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf"
+};
+
+std::string loadedFontPath = "";
+ImFont* font = nullptr;
+
+for (const char* fontPath : fontPaths)
+{
+    if (std::filesystem::exists(fontPath))
+    {
+        font = io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, nullptr, polish_ranges);
+        if (font) {
+            loadedFontPath = fontPath;
+            printf("[ImGui LOG] Pomyślnie załadowano czcionkę z polskimi znakami: %s\n", fontPath);
+            break;
+        }
+    }
+}
+
+if (!font)
+{
+    io.Fonts->AddFontDefault();
+    printf("[ImGui LOG] OSTRZEŻENIE: Nie odnaleziono żadnej czcionki TTF! Użyto domyślnej ProggyClean (brak obsługi polskich znaków).\n");
+}
+
+ImGui::StyleColorsDark();
+ImGui_ImplGlfw_InitForOpenGL(win, true);
+ImGui_ImplOpenGL3_Init("#version 330");
 
   std::vector<LiveParticle>   particles;
   std::vector<ParticleVertex> renderBuf;
