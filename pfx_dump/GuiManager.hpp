@@ -42,6 +42,8 @@ public:
                                    bool autoZoom, Texture2D& currentTexture, 
                                    const std::vector<std::string>& datPaths) 
     {
+        currentParams.clear();
+
         if (!lib.getParams(name, currentParams)) return;
 
         sys.clear();
@@ -74,10 +76,8 @@ public:
                        const std::vector<std::string>& datPaths) 
     {
         static char searchBuffer[128] = "";
-
         std::string searchFilter(searchBuffer);
         
-        // Podział efektów na PFX oraz VFX z uwzględnieniem filtra wyszukiwania
         std::vector<std::string> filteredPfx;
         std::vector<std::string> filteredVfx;
 
@@ -106,26 +106,23 @@ public:
 
         ImGui::Separator();
 
-        // System tabów podzielony na PFX oraz VFX
         if (ImGui::BeginTabBar("EffectTypeTabs")) {
             
-            // --- TAB 1: PARTICLE EFFECTS ---
             if (ImGui::BeginTabItem("ParticleFX")) {
-                handleNavKeys(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                bool scrollToSelected = handleNavKeys(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
                 
                 ImGui::BeginChild("lista_pfx");
-                renderEffectList(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                renderEffectList(filteredPfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths, scrollToSelected);
                 ImGui::EndChild();
                 
                 ImGui::EndTabItem();
             }
 
-            // --- TAB 2: VISUAL EFFECTS ---
             if (ImGui::BeginTabItem("VisualFX")) {
-                handleNavKeys(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                bool scrollToSelected = handleNavKeys(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
                 
                 ImGui::BeginChild("lista_vfx");
-                renderEffectList(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+                renderEffectList(filteredVfx, selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths, scrollToSelected);
                 ImGui::EndChild();
                 
                 ImGui::EndTabItem();
@@ -138,49 +135,74 @@ public:
 
         /* Panel Szczegółów */
         ImGui::SetNextWindowPos(ImVec2(350, 0), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(420, 480), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Inspector Szczegolow Efektu");
-        if (!selectedName.empty()) {
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Nazwa Instancji:"); ImGui::SameLine(); ImGui::Text("%s", selectedName.c_str());
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Plik Skryptu (.DAT):"); ImGui::SameLine(); ImGui::Text("%s", currentParams.originDatFile.c_str());
-            ImGui::Separator();
-            ImGui::TextUnformatted("--- TEKSTURA ---");
-            ImGui::Text("Deklarowana w Daedalus: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());
+        ImGui::SetNextWindowSize(ImVec2(420, 520), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Inspector Szczegolow Efektu")) {
 
-            if (!currentParams.loadedTexturePath.empty()) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Sciezka pliku:");
-                ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
+            if (!selectedName.empty()) {
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Nazwa Instancji:"); ImGui::SameLine(); ImGui::Text("%s", selectedName.c_str());
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Plik Skryptu (.DAT):"); ImGui::SameLine(); ImGui::Text("%s", currentParams.originDatFile.c_str());
+                ImGui::Separator();
+
+                // Sprawdzamy, czy plik wywoławczy pochodzi z VISUALFX.DAT
+                bool isVFX = containsIgnoreCase(lib.getOriginFile(selectedName), "VISUALFX");
+
+                if (isVFX) {
+                    /* --- INSPEKTOR VISUAL FX --- */
+                    ImGui::TextColored(ImVec4(0.9f, 0.4f, 1.0f, 1.0f), "--- VISUAL FX (C_XIVISUALFX) ---");
+                    ImGui::Text("Nazwa Wizualna / Model: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());
+                    
+                    if (!currentParams.loadedTexturePath.empty()) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Podpięta tekstura:");
+                        ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
+                        if (currentTexture.valid && currentTexture.id != 0) {
+                            ImGui::Text("Rozmiar GL: %dx%d px", currentTexture.width, currentTexture.height);
+                            ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(96, 96));
+                        }
+                    } else {
+                        ImGui::TextDisabled("Brak tekstury / Wykorzystuje model .3DS lub efekt logiczny.");
+                    }
+
+                } else {
+                    /* --- INSPEKTOR PARTICLE FX --- */
+                    ImGui::TextUnformatted("--- TEKSTURA ---");
+                    ImGui::Text("Deklarowana w Daedalus: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());
+
+                    if (!currentParams.loadedTexturePath.empty()) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Sciezka pliku:");
+                        ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Stan: Nieodnaleziona w katalogach/_compiled/VDF");
+                    }
+
+                    if (currentTexture.valid && currentTexture.id != 0) {
+                        ImGui::Text("Rozmiar GL: %dx%d px", currentTexture.width, currentTexture.height);
+                        ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(80, 80));
+                    }
+
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("--- PARAMETRY EMISJI ---");
+                    ImGui::Text("Szybkosć Emisji (ppsValue): %.2f", currentParams.ppsValue);
+                    ImGui::Text("Ksztalt Emitera (shpType): %s", currentParams.shpType.c_str());
+                    ImGui::Text("Wymiary Emitera: [%.1f, %.1f, %.1f]", currentParams.shpDim.x, currentParams.shpDim.y, currentParams.shpDim.z);
+                    ImGui::Text("Predkosc Cząsteczek: %.1f (+-%.1f)", currentParams.velAvg, currentParams.velVar);
+                    ImGui::Text("Czas Zycia: %.0f ms (+-%.0f ms)", currentParams.lspAvg, currentParams.lspVar);
+                    ImGui::Text("Grawitacja: [%.1f, %.1f, %.1f]", currentParams.gravity.x, currentParams.gravity.y, currentParams.gravity.z);
+                    ImGui::Text("Skala Rozmiaru (Start->End): [%.1f,%.1f] -> x%.2f", currentParams.sizeStart.x, currentParams.sizeStart.y, currentParams.sizeEndScale);
+                }
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Stan: Nieodnaleziona w katalogach/_compiled/VDF");
+                ImGui::TextDisabled("Wybierz efekt z listy, aby wyswietlic szczegoly.");
             }
-
-            if (currentTexture.valid && currentTexture.id != 0) {
-                ImGui::Text("Rozmiar GL: %dx%d px", currentTexture.width, currentTexture.height);
-                ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(80, 80));
-            }
-
-            ImGui::Separator();
-            ImGui::TextUnformatted("--- PARAMETRY EMISJI ---");
-            ImGui::Text("Szybkosć Emisji (ppsValue): %.2f", currentParams.ppsValue);
-            ImGui::Text("Ksztalt Emitera (shpType): %s", currentParams.shpType.c_str());
-            ImGui::Text("Wymiary Emitera: [%.1f, %.1f, %.1f]", currentParams.shpDim.x, currentParams.shpDim.y, currentParams.shpDim.z);
-            ImGui::Text("Predkosc Cząsteczek: %.1f (+-%.1f)", currentParams.velAvg, currentParams.velVar);
-            ImGui::Text("Czas Zycia: %.0f ms (+-%.0f ms)", currentParams.lspAvg, currentParams.lspVar);
-            ImGui::Text("Grawitacja: [%.1f, %.1f, %.1f]", currentParams.gravity.x, currentParams.gravity.y, currentParams.gravity.z);
-            ImGui::Text("Skala Rozmiaru (Start->End): [%.1f,%.1f] -> x%.2f", currentParams.sizeStart.x, currentParams.sizeStart.y, currentParams.sizeEndScale);
-        } else {
-            ImGui::TextDisabled("Wybierz efekt z listy, aby wyswietlic szczegoly.");
         }
         ImGui::End();
     }
 
 private:
-    static void handleNavKeys(const std::vector<std::string>& list, std::string& selectedName, 
+    static bool handleNavKeys(const std::vector<std::string>& list, std::string& selectedName, 
                               const ParticleLibrary& lib, PfxParams& currentParams, 
                               ParticleSystem& sys, bool autoZoom, Texture2D& currentTexture, 
                               const std::vector<std::string>& datPaths) 
     {
-        if (ImGui::GetIO().WantTextInput || list.empty()) return;
+        if (ImGui::GetIO().WantTextInput || list.empty()) return false;
 
         int currentIndex = -1;
         for (size_t i = 0; i < list.size(); ++i) {
@@ -196,13 +218,15 @@ private:
         if (newIndex != currentIndex && newIndex >= 0 && newIndex < static_cast<int>(list.size())) {
             selectedName = list[newIndex];
             loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
+            return true; // Przewinięcie aktywujemy tylko przy zmianie klawiszem
         }
+        return false;
     }
 
     static void renderEffectList(const std::vector<std::string>& list, std::string& selectedName, 
                                  const ParticleLibrary& lib, PfxParams& currentParams, 
                                  ParticleSystem& sys, bool autoZoom, Texture2D& currentTexture, 
-                                 const std::vector<std::string>& datPaths) 
+                                 const std::vector<std::string>& datPaths, bool scrollToSelected) 
     {
         for (const auto& n : list) {
             bool isSelected = (n == selectedName);
@@ -213,7 +237,9 @@ private:
                     loadSelectedEffect(selectedName, lib, currentParams, sys, autoZoom, currentTexture, datPaths);
                 }
             }
-            if (isSelected) ImGui::SetScrollHereY(0.5f);
+            if (isSelected && scrollToSelected) {
+                ImGui::SetScrollHereY(0.5f);
+            }
         }
     }
 };

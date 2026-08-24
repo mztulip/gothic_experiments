@@ -14,30 +14,56 @@ struct PfxParams
     float       ppsValue = 0.f;
     std::string visName;
 
-    std::string shpType = "POINT";
+    std::string shpType;
     glm::vec3   shpOffset = glm::vec3(0.f);
     glm::vec3   shpDim    = glm::vec3(0.f);
-    bool        shpIsVolume = true;
+    bool        shpIsVolume = false;
 
-    std::string dirMode = "RAND";
+    std::string dirMode;
     float       dirAngleHead    = 0.f;
     float       dirAngleHeadVar = 0.f;
-    float       dirAngleElev    = 90.f;
+    float       dirAngleElev    = 0.f;
     float       dirAngleElevVar = 0.f;
 
     float       velAvg = 0.f;
     float       velVar = 0.f;
-    float       lspAvg = 500.f;
+    float       lspAvg = 0.f;
     float       lspVar = 0.f;
 
     glm::vec3   gravity = glm::vec3(0.f);
 
     glm::vec3   colorStart = glm::vec3(1.f);
     glm::vec3   colorEnd   = glm::vec3(1.f);
-    glm::vec2   sizeStart  = glm::vec2(10.f, 10.f);
+    glm::vec2   sizeStart  = glm::vec2(0.f);
     float       sizeEndScale = 1.f;
     float       alphaStart = 1.f;
     float       alphaEnd   = 1.f;
+
+    void clear() {
+        originDatFile.clear();
+        loadedTexturePath.clear();
+        visName.clear();
+        shpType.clear();
+        dirMode.clear();
+
+        ppsValue = 0.f;
+        velAvg = 0.f; velVar = 0.f;
+        lspAvg = 0.f; lspVar = 0.f;
+        dirAngleHead = 0.f; dirAngleHeadVar = 0.f;
+        dirAngleElev = 0.f; dirAngleElevVar = 0.f;
+
+        shpOffset = glm::vec3(0.f);
+        shpDim = glm::vec3(0.f);
+        gravity = glm::vec3(0.f);
+        colorStart = glm::vec3(1.f);
+        colorEnd = glm::vec3(1.f);
+        sizeStart = glm::vec2(0.f);
+
+        sizeEndScale = 1.f;
+        alphaStart = 1.f;
+        alphaEnd = 1.f;
+        shpIsVolume = false;
+    }
 };
 
 inline glm::vec3 parseVec3(const std::string& s, glm::vec3 fallback = glm::vec3(0.f))
