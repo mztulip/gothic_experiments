@@ -6,6 +6,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <variant>
+#include <algorithm>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -88,7 +91,10 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_Init("#version 330");
 
     ParticleSystem particleSys;
-    PfxParams currentParams;
+    
+    // Rozdzielony stan efektów (variant)
+    ActiveEffectParams activeParams;
+    
     Texture2D currentTexture;
     std::string selectedName;
     bool autoZoom = true;
@@ -105,7 +111,8 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        GuiManager::drawUI(lib, selectedName, currentParams, particleSys, autoZoom, currentTexture, datPaths);
+        // Rysowanie UI – modyfikuje activeParams
+        GuiManager::drawUI(lib, selectedName, activeParams, particleSys, autoZoom, currentTexture, datPaths);
 
         CameraController::updateMovement(dt);
 
@@ -114,10 +121,16 @@ int main(int argc, char** argv) {
             CameraController::g_resetRequested = false;
         }
 
-        particleSys.update(dt, currentParams, selectedName);
+        // Aktualizuj system cząsteczek tylko wtedy, gdy wybrany efekt to PFX
+        auto* pfxParams = std::get_if<PfxParams>(&activeParams);
+        if (pfxParams) {
+            particleSys.update(dt, *pfxParams, selectedName);
+        } else {
+            particleSys.clear(); // Czyści starą symulację, jeśli przełączyliśmy się na VFX
+        }
 
         const auto& renderBuf = particleSys.getRenderBuffer();
-        if (!renderBuf.empty()) {
+        if (pfxParams && !renderBuf.empty()) {
             glBindBuffer(GL_ARRAY_BUFFER, pVbo);
             glBufferSubData(GL_ARRAY_BUFFER, 0, GLsizeiptr(renderBuf.size() * sizeof(ParticleVertex)), renderBuf.data());
         }
@@ -141,26 +154,26 @@ int main(int argc, char** argv) {
         glBindVertexArray(floorVao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Rysowanie cząsteczek
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        glUseProgram(particleProg);
-        glUniformMatrix4fv(glGetUniformLocation(particleProg, "uView"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(particleProg, "uProj"), 1, GL_FALSE, glm::value_ptr(proj));
-        glUniform1f(glGetUniformLocation(particleProg, "uViewportHeight"), float(fbh));
+        // Rysowanie cząsteczek (tylko gdy aktywne jest PFX)
+        if (pfxParams && !renderBuf.empty()) {
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glUseProgram(particleProg);
+            glUniformMatrix4fv(glGetUniformLocation(particleProg, "uView"), 1, GL_FALSE, glm::value_ptr(view));
+            glUniformMatrix4fv(glGetUniformLocation(particleProg, "uProj"), 1, GL_FALSE, glm::value_ptr(proj));
+            glUniform1f(glGetUniformLocation(particleProg, "uViewportHeight"), float(fbh));
 
-        GLint useTexLoc = glGetUniformLocation(particleProg, "uUseTexture");
-        GLint texLoc    = glGetUniformLocation(particleProg, "uTexture");
+            GLint useTexLoc = glGetUniformLocation(particleProg, "uUseTexture");
+            GLint texLoc    = glGetUniformLocation(particleProg, "uTexture");
 
-        if (currentTexture.valid && currentTexture.id != 0) {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, currentTexture.id);
-            glUniform1i(texLoc, 0);
-            glUniform1i(useTexLoc, 1);
-        } else {
-            glUniform1i(useTexLoc, 0);
-        }
+            if (currentTexture.valid && currentTexture.id != 0) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, currentTexture.id);
+                glUniform1i(texLoc, 0);
+                glUniform1i(useTexLoc, 1);
+            } else {
+                glUniform1i(useTexLoc, 0);
+            }
 
-        if (!renderBuf.empty()) {
             glBindVertexArray(pVao);
             glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(renderBuf.size()));
         }

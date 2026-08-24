@@ -10,9 +10,7 @@
 
 class PfxLoader {
 public:
-    static bool tryLoadPfx(const std::string& name, 
-                           const std::vector<std::shared_ptr<LoadedScript>>& scripts, 
-                           PfxParams& outParams) 
+    static bool tryLoadPfx(const std::string& name, const std::vector<std::shared_ptr<LoadedScript>>& scripts, PfxParams& out)
     {
         for (const auto& sc : scripts) {
             if (!sc || !sc->vm) continue;
@@ -21,7 +19,6 @@ public:
             if (!sym) continue;
 
             // Sprawdzamy czy symbol dziedziczy po C_PARTICLEFX
-            // W ZenKicie parent() wskazuje na symbol klasy (np. C_PARTICLEFX)
             auto* parentSym = sc->vm->find_symbol_by_index(sym->parent());
             if (parentSym && parentSym->name() != "C_PARTICLEFX") {
                 continue; // To nie jest PFX, pomijamy
@@ -32,8 +29,8 @@ public:
                 pfx->vis_tex_is_quadpoly = 1;
 
                 sc->vm->init_instance(pfx, sym);
-                outParams = extractParams(*pfx);
-                outParams.originDatFile = sc->fileName;
+                out = extractPfxParams(*pfx);
+                out.originDatFile = sc->fileName;
                 return true;
             } catch (...) {
                 continue;

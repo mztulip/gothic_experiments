@@ -14,6 +14,7 @@
 
 #include "LoadedScript.hpp"
 #include "PfxParams.hpp"
+#include "VfxParams.hpp"
 #include "StringUtils.hpp"
 #include "pfxloader.hpp"
 #include "vfxloader.hpp"
@@ -38,6 +39,8 @@ public:
         }
 
         try { zenkit::IParticleEffect::register_(loaded->script); } catch (...) {}
+        try { zenkit::IEffectBase::register_(loaded->script); } catch (...) {}
+
 
         std::vector<uint32_t> parentIndices;
         const char* classNames[] = { "C_PARTICLEFX", "C_PARTICLEFXEMITHP", "C_XIVISUALFX", "CFX" };
@@ -62,11 +65,12 @@ public:
             }
         }
 
-        // W ParticleLibrary::loadFile:
         loaded->vm = std::make_shared<zenkit::DaedalusVm>(
             std::move(loaded->script), 
             zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS
         );
+
+        
         scripts.push_back(std::move(loaded));
         std::sort(effectNames.begin(), effectNames.end());
         return true;
@@ -79,8 +83,13 @@ public:
         return it != effectOriginMap.end() ? it->second : "Nieznany";
     }
 
-    bool getParams(const std::string& name, PfxParams& out) const {
-        if (PfxLoader::tryLoadPfx(name, scripts, out)) return true;
+    // Pobiera parametry wyłacznie dla ParticleFX (PARTICLEFX.DAT)
+    bool getPfxParams(const std::string& name, PfxParams& out) const {
+        return PfxLoader::tryLoadPfx(name, scripts, out);
+    }
+
+    // Pobiera parametry wyłączenie dla VisualFX (VISUALFX.DAT)
+    bool getVfxParams(const std::string& name, VfxParams& out) const {
         return VfxLoader::tryLoadVfx(name, scripts, out);
     }
 
