@@ -19,36 +19,26 @@ public:
             auto* sym = sc->vm->find_symbol_by_name(name);
             if (!sym) continue;
 
-            auto* parentSym = sc->script.find_symbol_by_index(sym->parent());
-            std::string parentName = parentSym ? parentSym->name() : "";
+            try {
+                auto vfx = std::make_shared<zenkit::IEffectBase>();
+                sc->vm->init_instance(vfx, sym);
 
-            if (containsIgnoreCase(parentName, "C_XIVISUALFX") || 
-                containsIgnoreCase(parentName, "CFX")) 
-            {
-                try {
-                    // W ZenKit używamy zenkit::IEffectBase
-                    auto vfx = std::make_shared<zenkit::IEffectBase>();
-                    sc->vm->init_instance(vfx, sym);
+                std::string childPfxName = vfx->em_fx_create_s;
 
-                    std::string childPfxName = vfx->em_fx_create_s;
-
-                    // Jeśli VFX odwołuje się do cząsteczki PFX
-                    if (!childPfxName.empty() && !containsIgnoreCase(childPfxName, name)) {
-                        if (PfxLoader::tryLoadPfx(childPfxName, scripts, outParams)) {
-                            outParams.originDatFile = sc->fileName + " -> " + childPfxName;
-                            return true;
-                        }
+                if (!childPfxName.empty() && childPfxName != name) {
+                    if (PfxLoader::tryLoadPfx(childPfxName, scripts, outParams)) {
+                        outParams.originDatFile = sc->fileName + " -> " + childPfxName;
+                        return true;
                     }
-
-                    // Jeśli VFX wskazuje bezpośrednio na teksturę / mesh
-                    outParams = PfxParams();
-                    outParams.visName = vfx->vis_name_s;
-                    outParams.ppsValue = 5.0f;
-                    outParams.originDatFile = sc->fileName + " (VisualFX Mesh)";
-                    return true;
-                } catch (...) {
-                    return false;
                 }
+
+                outParams = PfxParams();
+                outParams.visName = vfx->vis_name_s;
+                outParams.ppsValue = 5.0f;
+                outParams.originDatFile = sc->fileName;
+                return true;
+            } catch (...) {
+                return false;
             }
         }
         return false;
