@@ -20,16 +20,23 @@ public:
             auto* sym = sc->vm->find_symbol_by_name(name);
             if (!sym) continue;
 
-            auto pfx = std::make_shared<zenkit::IParticleEffect>();
-            pfx->vis_tex_is_quadpoly = 1;
+            // Sprawdzamy czy symbol dziedziczy po C_PARTICLEFX
+            // W ZenKicie parent() wskazuje na symbol klasy (np. C_PARTICLEFX)
+            auto* parentSym = sc->vm->find_symbol_by_index(sym->parent());
+            if (parentSym && parentSym->name() != "C_PARTICLEFX") {
+                continue; // To nie jest PFX, pomijamy
+            }
 
             try {
+                auto pfx = std::make_shared<zenkit::IParticleEffect>();
+                pfx->vis_tex_is_quadpoly = 1;
+
                 sc->vm->init_instance(pfx, sym);
                 outParams = extractParams(*pfx);
                 outParams.originDatFile = sc->fileName;
                 return true;
             } catch (...) {
-                return false;
+                continue;
             }
         }
         return false;
