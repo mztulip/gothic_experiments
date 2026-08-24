@@ -1,5 +1,5 @@
 /*
-   pfxview - podglad na zywo efektow czasteczkowych z Gothic/Gothic II z integracją TextureLoadera.
+   pfxview - podglad na zywo efektow czasteczkowych z Gothic/Gothic II z obsługa PARTICLEFX.DAT oraz VISUALFX.DAT.
 */
 
 #include <epoxy/gl.h>
@@ -28,13 +28,14 @@
 #include <random>
 #include <algorithm>
 #include <filesystem>
+#include <unordered_map>
 
 #include "texture_loader.h"
 
 namespace fs = std::filesystem;
 
 /* ---------------------------------------------------------------------
-   Pomocnicze funkcja tekstowe
+   Pomocnicze funkcje tekstowe
    --------------------------------------------------------------------- */
 
 static bool containsIgnoreCase(const std::string& str, const std::string& subStr)
@@ -48,10 +49,6 @@ static bool containsIgnoreCase(const std::string& str, const std::string& subStr
   return it != str.end();
 }
 
-/* ---------------------------------------------------------------------
-   Parsowanie parametrow efektu
-   --------------------------------------------------------------------- */
-
 static glm::vec3 parseVec3(const std::string& s, glm::vec3 fallback = glm::vec3(0.f))
 {
   float v[3] = {fallback.x, fallback.y, fallback.z};
@@ -60,8 +57,7 @@ static glm::vec3 parseVec3(const std::string& s, glm::vec3 fallback = glm::vec3(
   {
     char* next = nullptr;
     float f = std::strtof(str, &next);
-    if(str==next)
-      break;
+    if(str==next) break;
     v[i] = f;
     str = next;
   }
@@ -76,8 +72,7 @@ static glm::vec2 parseVec2(const std::string& s, glm::vec2 fallback = glm::vec2(
   {
     char* next = nullptr;
     float f = std::strtof(str, &next);
-    if(str==next)
-      break;
+    if(str==next) break;
     v[i] = f;
     str = next;
   }
@@ -85,38 +80,40 @@ static glm::vec2 parseVec2(const std::string& s, glm::vec2 fallback = glm::vec2(
 }
 
 /* ---------------------------------------------------------------------
-   Parametry efektu potrzebne symulacji
+   Parametry i metadane efektu
    --------------------------------------------------------------------- */
 struct PfxParams
 {
-  float     ppsValue = 0.f;
+  std::string originDatFile;
+  std::string loadedTexturePath;
 
+  float       ppsValue = 0.f;
   std::string visName;
 
   std::string shpType = "POINT";
-  glm::vec3 shpOffset = glm::vec3(0.f);
-  glm::vec3 shpDim    = glm::vec3(0.f);
-  bool      shpIsVolume = true;
+  glm::vec3   shpOffset = glm::vec3(0.f);
+  glm::vec3   shpDim    = glm::vec3(0.f);
+  bool        shpIsVolume = true;
 
   std::string dirMode = "RAND";
-  float     dirAngleHead    = 0.f;
-  float     dirAngleHeadVar = 0.f;
-  float     dirAngleElev    = 90.f;
-  float     dirAngleElevVar = 0.f;
+  float       dirAngleHead    = 0.f;
+  float       dirAngleHeadVar = 0.f;
+  float       dirAngleElev    = 90.f;
+  float       dirAngleElevVar = 0.f;
 
-  float     velAvg = 0.f;
-  float     velVar = 0.f;
-  float     lspAvg = 500.f; /* ms */
-  float     lspVar = 0.f;
+  float       velAvg = 0.f;
+  float       velVar = 0.f;
+  float       lspAvg = 500.f;
+  float       lspVar = 0.f;
 
-  glm::vec3 gravity = glm::vec3(0.f);
+  glm::vec3   gravity = glm::vec3(0.f);
 
-  glm::vec3 colorStart = glm::vec3(1.f);
-  glm::vec3 colorEnd   = glm::vec3(1.f);
-  glm::vec2 sizeStart  = glm::vec2(10.f, 10.f);
-  float     sizeEndScale = 1.f;
-  float     alphaStart = 1.f;
-  float     alphaEnd   = 1.f;
+  glm::vec3   colorStart = glm::vec3(1.f);
+  glm::vec3   colorEnd   = glm::vec3(1.f);
+  glm::vec2   sizeStart  = glm::vec2(10.f, 10.f);
+  float       sizeEndScale = 1.f;
+  float       alphaStart = 1.f;
+  float       alphaEnd   = 1.f;
 };
 
 static PfxParams extractParams(const zenkit::IParticleEffect& p)
@@ -156,112 +153,161 @@ static PfxParams extractParams(const zenkit::IParticleEffect& p)
 }
 
 /* ---------------------------------------------------------------------
-   ParticleLibrary
+   ParticleLibrary - wielo-plikowy menedżer skryptów .DAT
    --------------------------------------------------------------------- */
+struct LoadedScript
+{
+  std::string fileName;
+  zenkit::DaedalusScript script;
+  std::unique_ptr<zenkit::DaedalusVm> vm;
+};
+
 class ParticleLibrary
 {
 public:
-  bool load(const std::string& datPath)
+  bool loadFile(const std::string& datPath)
   {
-    zenkit::DaedalusScript script;
+    std::string filename = fs::path(datPath).filename().string();
+
+    auto loaded = std::make_unique<LoadedScript>();
+    loaded->fileName = filename;
+
     try
     {
       auto reader = zenkit::Read::from(datPath);
-      script.load(reader.get());
+      loaded->script.load(reader.get());
     }
     catch(const std::exception& e)
     {
-      fprintf(stderr, "Nie udalo sie wczytac %s: %s\n", datPath.c_str(), e.what());
+      fprintf(stderr, "[Library] Nie udalo sie wczytac %s: %s\n", datPath.c_str(), e.what());
       return false;
     }
 
     try
     {
-      zenkit::IParticleEffect::register_(script);
+      zenkit::IParticleEffect::register_(loaded->script);
     }
-    catch(const std::exception& e)
+    catch(...) {}
+
+    std::vector<uint32_t> parentIndices;
+    const char* classNames[] = { "C_PARTICLEFX", "C_PARTICLEFXEMITHP", "C_XIVISUALFX", "CFX" };
+    
+    for(const char* className : classNames)
     {
-      fprintf(stderr, "Nie udalo sie zarejestrowac C_PARTICLEFX: %s\n", e.what());
-      return false;
+      auto* cls = loaded->script.find_symbol_by_name(className);
+      if(cls != nullptr) parentIndices.push_back(cls->index());
     }
 
-    auto* cls = script.find_symbol_by_name("C_PARTICLEFX");
-    if(cls!=nullptr)
+    for(auto& sym : loaded->script.symbols())
     {
-      for(auto& sym : script.symbols())
+      if(sym.type() == zenkit::DaedalusDataType::INSTANCE || sym.type() == zenkit::DaedalusDataType::PROTOTYPE)
       {
-        if(sym.type()==zenkit::DaedalusDataType::INSTANCE && sym.parent()==cls->index())
-          effectNames.push_back(sym.name());
+        bool isPfx = false;
+        for(uint32_t pIdx : parentIndices)
+        {
+          if(sym.parent() == pIdx) { isPfx = true; break; }
+        }
+
+        if(isPfx || containsIgnoreCase(sym.name(), "PFX") || containsIgnoreCase(sym.name(), "POTION") || containsIgnoreCase(sym.name(), "SPELL"))
+        {
+          if(effectOriginMap.find(sym.name()) == effectOriginMap.end())
+          {
+            effectNames.push_back(sym.name());
+            effectOriginMap[sym.name()] = filename;
+          }
+        }
       }
-      std::sort(effectNames.begin(), effectNames.end());
     }
 
-    vm = std::make_unique<zenkit::DaedalusVm>(std::move(script), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+    loaded->vm = std::make_unique<zenkit::DaedalusVm>(std::move(loaded->script), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+    scripts.push_back(std::move(loaded));
+
+    std::sort(effectNames.begin(), effectNames.end());
     return true;
   }
 
   const std::vector<std::string>& names() const { return effectNames; }
 
+  std::string getOriginFile(const std::string& name) const
+  {
+    auto it = effectOriginMap.find(name);
+    return it != effectOriginMap.end() ? it->second : "Nieznany";
+  }
+
   bool getParams(const std::string& name, PfxParams& out) const
   {
-    if(!vm)
-      return false;
-
-    auto* sym = vm->find_symbol_by_name(name);
-    if(sym==nullptr)
-      return false;
-
-    auto pfx = std::make_shared<zenkit::IParticleEffect>();
-    pfx->vis_tex_is_quadpoly = 1;
-
-    try
+    for(const auto& sc : scripts)
     {
-      vm->init_instance(pfx, sym);
-    }
-    catch(const std::exception& e)
-    {
-      fprintf(stderr, "Blad inicjalizacji \"%s\": %s\n", name.c_str(), e.what());
-      return false;
-    }
+      auto* sym = sc->vm->find_symbol_by_name(name);
+      if(!sym) continue;
 
-    out = extractParams(*pfx);
-    return true;
+      auto pfx = std::make_shared<zenkit::IParticleEffect>();
+      pfx->vis_tex_is_quadpoly = 1;
+
+      try
+      {
+        sc->vm->init_instance(pfx, sym);
+        out = extractParams(*pfx);
+        out.originDatFile = sc->fileName;
+        return true;
+      }
+      catch(...)
+      {
+        return false;
+      }
+    }
+    return false;
   }
 
 private:
-  std::unique_ptr<zenkit::DaedalusVm> vm;
-  std::vector<std::string>            effectNames;
+  std::vector<std::unique_ptr<LoadedScript>> scripts;
+  std::vector<std::string>                   effectNames;
+  std::unordered_map<std::string, std::string> effectOriginMap;
 };
 
 /* ---------------------------------------------------------------------
-   Rozwiazanie sciezki do PARTICLEFX.DAT
+   Rozwiązanie ścieżek
    --------------------------------------------------------------------- */
-static std::string resolveDatPath(int argc, char** argv)
+static std::vector<std::string> discoverDatFiles(int argc, char** argv)
 {
-  if(argc>=2)
-    return argv[1];
+  std::vector<std::string> result;
+  std::string baseDir;
 
-  const char* env = std::getenv("GOTHIC2_DIR");
-  if(env!=nullptr && env[0]!='\0')
+  if(argc >= 2)
   {
-    std::string base = env;
-    if(!base.empty() && base.back()!='/' && base.back()!='\\')
-      base += '/';
-    return base + "_Work/Data/Scripts/_compiled/PARTICLEFX.DAT";
+    baseDir = fs::path(argv[1]).parent_path().string();
+    result.push_back(argv[1]);
+  }
+  else
+  {
+    const char* env = std::getenv("GOTHIC2_DIR");
+    if(env && env[0] != '\0')
+      baseDir = std::string(env) + "/_Work/Data/Scripts/_compiled/";
   }
 
-  return "";
+  if(!baseDir.empty() && fs::exists(baseDir))
+  {
+    std::string pfx = baseDir + "/PARTICLEFX.DAT";
+    std::string vfx = baseDir + "/VISUALFX.DAT";
+
+    if(fs::exists(pfx) && std::find(result.begin(), result.end(), pfx) == result.end())
+      result.push_back(pfx);
+    if(fs::exists(vfx) && std::find(result.begin(), result.end(), vfx) == result.end())
+      result.push_back(vfx);
+  }
+
+  return result;
 }
 
 /* ---------------------------------------------------------------------
-   Symulacja czasteczek
+   Fizyka i Symulacja Cząsteczek
    --------------------------------------------------------------------- */
 struct LiveParticle
 {
   glm::vec3 pos;
   glm::vec3 vel;
-  float     age      = 0.f; /* ms */
-  float     lifetime = 500.f; /* ms */
+  float     age      = 0.f;
+  float     lifetime = 500.f;
 };
 
 struct ParticleVertex
@@ -284,10 +330,7 @@ static glm::vec3 sampleEmitterPos(const PfxParams& p)
 {
   glm::vec3 local(0.f);
 
-  if(p.shpType=="LINE")
-  {
-    local.x = randRange(-p.shpDim.x*0.5f, p.shpDim.x*0.5f);
-  }
+  if(p.shpType=="LINE") local.x = randRange(-p.shpDim.x*0.5f, p.shpDim.x*0.5f);
   else if(p.shpType=="BOX")
   {
     local.x = randRange(-p.shpDim.x*0.5f, p.shpDim.x*0.5f);
@@ -346,8 +389,7 @@ static float estimateEffectRadius(const PfxParams& p)
   float travel        = speedMax * lifeSec;
   float gravityDrop   = 0.5f * glm::length(p.gravity) * lifeSec * lifeSec;
 
-  float radius = shapeExtent + travel + gravityDrop;
-  return std::max(radius, 50.f);
+  return std::max(shapeExtent + travel + gravityDrop, 50.f);
 }
 
 static void spawnParticle(const PfxParams& p, std::vector<LiveParticle>& particles)
@@ -373,6 +415,7 @@ layout(location = 2) in vec4  aColorAlpha;
 
 uniform mat4 uView;
 uniform mat4 uProj;
+uniform float uViewportHeight;
 
 out vec4 vColorAlpha;
 
@@ -380,8 +423,11 @@ void main() {
   vec4 viewPos = uView * vec4(aPos, 1.0);
   gl_Position = uProj * viewPos;
 
-  float dist = length(viewPos.xyz);
-  gl_PointSize = clamp(aSize * (600.0/max(dist,1.0)), 1.0, 256.0);
+  if (viewPos.z < 0.0) {
+    gl_PointSize = uProj[1][1] * (aSize / -viewPos.z) * (uViewportHeight * 0.5);
+  } else {
+    gl_PointSize = 0.0;
+  }
 
   vColorAlpha = aColorAlpha;
 }
@@ -459,7 +505,7 @@ static GLuint linkProgram(GLuint vs, GLuint fs)
 }
 
 /* ---------------------------------------------------------------------
-   Kamera Orbitująca (Z dystansem zamiast modyfikacji FOV)
+   Kamera Orbitująca
    --------------------------------------------------------------------- */
 struct Camera
 {
@@ -482,20 +528,9 @@ struct Camera
     return targetPos - dir * distance;
   }
 
-  glm::vec3 front() const
-  {
-    return glm::normalize(targetPos - getPosition());
-  }
-
-  glm::vec3 right() const
-  {
-    return glm::normalize(glm::cross(front(), glm::vec3(0, 1, 0)));
-  }
-
-  glm::mat4 view() const
-  {
-    return glm::lookAt(getPosition(), targetPos, glm::vec3(0, 1, 0));
-  }
+  glm::vec3 front() const { return glm::normalize(targetPos - getPosition()); }
+  glm::vec3 right() const { return glm::normalize(glm::cross(front(), glm::vec3(0, 1, 0))); }
+  glm::mat4 view() const  { return glm::lookAt(getPosition(), targetPos, glm::vec3(0, 1, 0)); }
 };
 
 static Camera g_cam;
@@ -504,21 +539,14 @@ static double g_lastX = 400, g_lastY = 300;
 static bool   g_firstMouse = true;
 static bool   g_lookActive = false;
 static bool   g_resetRequested = false;
-static const float FIXED_FOV = 60.f; // Stałe, naturalne pole widzenia
+static const float FIXED_FOV = 60.f;
 
 static void scrollCallback(GLFWwindow*, double, double yoffset)
 {
-  if(ImGui::GetIO().WantCaptureMouse)
-    return;
-
-  // Pravdziwy zoom: Fizyczna zmiana odległości kamery od obiektu!
+  if(ImGui::GetIO().WantCaptureMouse) return;
   float zoomFactor = 1.15f;
-  if(yoffset > 0)
-    g_cam.distance /= zoomFactor;
-  else if(yoffset < 0)
-    g_cam.distance *= zoomFactor;
-
-  // Zakres od bardzo bliskiego podglądu do dystansu dla ogromnych efektów
+  if(yoffset > 0) g_cam.distance /= zoomFactor;
+  else if(yoffset < 0) g_cam.distance *= zoomFactor;
   g_cam.distance = std::clamp(g_cam.distance, 5.f, 50000.f);
 }
 
@@ -526,28 +554,20 @@ static void reframeCameraToEffect(const PfxParams& p)
 {
   float radius = estimateEffectRadius(p);
   g_cam.targetPos = p.shpOffset + baseDirection(p) * (radius * 0.2f);
-
-  // Ustalamy odległość na podstawie estymowanego promienia tak, aby cały efekt był w kadru
-  g_cam.distance = radius * 2.5f;
-  g_cam.distance = std::clamp(g_cam.distance, 20.f, 30000.f);
+  g_cam.distance = std::clamp(radius * 2.5f, 20.f, 30000.f);
 }
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
 {
-  if(action==GLFW_PRESS || action==GLFW_RELEASE)
-    g_keys[key] = (action==GLFW_PRESS);
-
+  if(action==GLFW_PRESS || action==GLFW_RELEASE) g_keys[key] = (action==GLFW_PRESS);
   if(action!=GLFW_PRESS) return;
-
   if(key==GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
   if(key==GLFW_KEY_R) g_resetRequested = true;
 }
 
 static void mouseButtonCallback(GLFWwindow* w, int button, int action, int)
 {
-  if(button!=GLFW_MOUSE_BUTTON_LEFT)
-    return;
-
+  if(button!=GLFW_MOUSE_BUTTON_LEFT) return;
   if(action==GLFW_PRESS && !ImGui::GetIO().WantCaptureMouse)
   {
     g_lookActive = true;
@@ -575,100 +595,69 @@ static void cursorCallback(GLFWwindow*, double x, double y)
 
 static void loadSelectedEffect(const std::string& name, const ParticleLibrary& lib, PfxParams& currentParams, 
                                 std::vector<LiveParticle>& particles, float& spawnAccum, bool autoZoom, 
-                                Texture2D& currentTexture, const std::string& datPath)
+                                Texture2D& currentTexture, const std::vector<std::string>& datPaths)
 {
   if(lib.getParams(name, currentParams))
   {
     particles.clear();
     spawnAccum = 0.f;
-    if(autoZoom)
-      reframeCameraToEffect(currentParams);
-    
-    printf("Zaladowano \"%s\": pps=%.1f shp=%s vel=%.1f+-%.1f lsp=%.0f+-%.0fms\n",
-           name.c_str(), currentParams.ppsValue, currentParams.shpType.c_str(),
-           currentParams.velAvg, currentParams.velVar, currentParams.lspAvg, currentParams.lspVar);
+    if(autoZoom) reframeCameraToEffect(currentParams);
 
     std::string gothicDir;
     const char* envDir = std::getenv("GOTHIC2_DIR");
 
-    if (envDir != nullptr && envDir[0] != '\0')
+    if (envDir && envDir[0] != '\0')
     {
-        gothicDir = envDir;
+      gothicDir = envDir;
     }
-    else
+    else if(!datPaths.empty())
     {
-        fs::path p(datPath);
-        while (p.has_parent_path() && p.filename() != "_Work")
-        {
-            p = p.parent_path();
-        }
-        
-        if (p.filename() == "_Work")
-        {
-            gothicDir = p.parent_path().string();
-        }
-        else
-        {
-            gothicDir = fs::path(datPath).parent_path().string();
-        }
+      fs::path p(datPaths[0]);
+      while (p.has_parent_path() && p.filename() != "_Work") p = p.parent_path();
+      gothicDir = (p.filename() == "_Work") ? p.parent_path().string() : fs::path(datPaths[0]).parent_path().string();
     }
 
     currentTexture.free();
+    currentParams.loadedTexturePath.clear();
 
     if (!currentParams.visName.empty())
     {
-        std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
+      std::string fullPath = TextureLoader::resolveGothicTexturePath(currentParams.visName, gothicDir);
 
-        if (!fullPath.empty())
-        {
-            currentTexture = TextureLoader::loadFromFile(fullPath, false);
-
-            if (currentTexture.valid)
-            {
-                printf("  [TextureLoader] SUKCES: Zaladowano \"%s\" (GL ID: %u, %dx%d px)\n",
-                    currentParams.visName.c_str(), currentTexture.id, currentTexture.width, currentTexture.height);
-            }
-            else
-            {
-                printf("  [TextureLoader] BLAD: Nie udalo sie zaladowac: %s\n", fullPath.c_str());
-            }
-        }
-        else
-        {
-            printf("  [TextureLoader] NIE ZNALAZIONO pliku dla tekstury: \"%s\" (Szukano w: %s)\n", 
-                currentParams.visName.c_str(), gothicDir.c_str());
-        }
-    }
-    else
-    {
-      printf("  [TextureLoader] Efekt nie definiuje tekstury (vis_name_s jest puste).\n");
+      if (!fullPath.empty())
+      {
+        currentTexture = TextureLoader::loadFromFile(fullPath, false);
+        if (currentTexture.valid) currentParams.loadedTexturePath = fullPath;
+      }
     }
   }
 }
 
 int main(int argc, char** argv)
 {
-  std::string datPath = resolveDatPath(argc, argv);
-  if(datPath.empty())
+  auto datPaths = discoverDatFiles(argc, argv);
+  if(datPaths.empty())
   {
-    fprintf(stderr, "Brak sciezki do PARTICLEFX.DAT.\n");
-    fprintf(stderr, "Podaj ja jako argument, albo ustaw zmienna GOTHIC2_DIR, np.:\n");
-    fprintf(stderr, "  export GOTHIC2_DIR=\"/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/\"\n");
+    fprintf(stderr, "Brak sciezki do PARTICLEFX.DAT lub VISUALFX.DAT.\n");
     return 1;
   }
 
   ParticleLibrary lib;
-  if(!lib.load(datPath))
-    return 1;
-  printf("Wczytano %zu efektow czasteczkowych z %s\n", lib.names().size(), datPath.c_str());
+  for(const auto& path : datPaths)
+  {
+    if(lib.loadFile(path))
+      printf("Zaladowano skrypt: %s\n", path.c_str());
+  }
 
-  if(!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
+  printf("Suma wczytanych efektow: %zu\n", lib.names().size());
+
+  if(!glfwInit()) return 1;
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  GLFWwindow* win = glfwCreateWindow(1400, 800, "pfxview", nullptr, nullptr);
-  if(!win) { fprintf(stderr, "glfwCreateWindow failed\n"); glfwTerminate(); return 1; }
+  GLFWwindow* win = glfwCreateWindow(1400, 800, "pfxview - Gothic Particle Inspector", nullptr, nullptr);
+  if(!win) { glfwTerminate(); return 1; }
   glfwMakeContextCurrent(win);
   glfwSwapInterval(1);
   glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -691,10 +680,7 @@ int main(int argc, char** argv)
   glDeleteShader(fvs); glDeleteShader(ffs);
 
   float R = 2000.f;
-  float floorVerts[] = {
-    -R,0,-R,  R,0,-R,  R,0,R,
-    -R,0,-R,  R,0,R,  -R,0,R,
-  };
+  float floorVerts[] = { -R,0,-R, R,0,-R, R,0,R, -R,0,-R, R,0,R, -R,0,R };
   GLuint floorVao, floorVbo;
   glGenVertexArrays(1,&floorVao);
   glGenBuffers(1,&floorVbo);
@@ -703,7 +689,6 @@ int main(int argc, char** argv)
   glBufferData(GL_ARRAY_BUFFER, sizeof(floorVerts), floorVerts, GL_STATIC_DRAW);
   glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);
   glEnableVertexAttribArray(0);
-  glBindVertexArray(0);
 
   const size_t MAX_PARTICLES = 50000;
   GLuint pVao, pVbo;
@@ -718,7 +703,6 @@ int main(int argc, char** argv)
   glEnableVertexAttribArray(1);
   glVertexAttribPointer(2,4,GL_FLOAT,GL_FALSE,sizeof(ParticleVertex),(void*)offsetof(ParticleVertex,colorAlpha));
   glEnableVertexAttribArray(2);
-  glBindVertexArray(0);
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -742,8 +726,7 @@ int main(int argc, char** argv)
   while(!glfwWindowShouldClose(win))
   {
     double now = glfwGetTime();
-    float dt = float(now-lastTime);
-    dt = std::min(dt, 0.05f);
+    float dt = std::min(float(now-lastTime), 0.05f);
     lastTime = now;
 
     glfwPollEvents();
@@ -756,70 +739,43 @@ int main(int argc, char** argv)
     std::vector<std::string> filteredNames;
     for (const auto& name : lib.names())
     {
-      if (containsIgnoreCase(name, searchFilter))
-        filteredNames.push_back(name);
+      if (containsIgnoreCase(name, searchFilter)) filteredNames.push_back(name);
     }
 
-    // --- NAWIGACJA STRZAŁKAMI (BEZ BLOKOWANIA SUWAKA) ---
     bool selectionChangedByKeys = false;
     if (!ImGui::GetIO().WantTextInput && !filteredNames.empty())
     {
       int currentIndex = -1;
       for (size_t i = 0; i < filteredNames.size(); ++i)
       {
-        if (filteredNames[i] == selectedName)
-        {
-          currentIndex = static_cast<int>(i);
-          break;
-        }
+        if (filteredNames[i] == selectedName) { currentIndex = static_cast<int>(i); break; }
       }
 
       int newIndex = currentIndex;
       if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false))
-      {
         newIndex = (currentIndex <= 0) ? static_cast<int>(filteredNames.size()) - 1 : currentIndex - 1;
-      }
       else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false))
-      {
         newIndex = (currentIndex < 0 || currentIndex >= static_cast<int>(filteredNames.size()) - 1) ? 0 : currentIndex + 1;
-      }
 
       if (newIndex != currentIndex && newIndex >= 0 && newIndex < static_cast<int>(filteredNames.size()))
       {
         selectedName = filteredNames[newIndex];
-        loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPath);
+        loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPaths);
         selectionChangedByKeys = true;
       }
     }
 
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(320,800), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Efekty czasteczkowe");
-    ImGui::Text("Znaleziono: %zu", lib.names().size());
-    ImGui::Text("Dystans kamery: %.0f (kolko)", g_cam.distance);
-    ImGui::Checkbox("Automatyczny zoom do efektu", &autoZoom);
-    if(!selectedName.empty())
-    {
-      if(ImGui::Button("Dopasuj teraz"))
-        reframeCameraToEffect(currentParams);
-    }
-    else
-    {
-      ImGui::TextDisabled("Dopasuj teraz (wybierz efekt)");
-    }
-    ImGui::Separator();
+    ImGui::SetNextWindowSize(ImVec2(340,800), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Efekty (DAT)");
+    ImGui::Text("Efekty na liscie: %zu", lib.names().size());
+    ImGui::Checkbox("Auto Zoom", &autoZoom);
+    ImGui::SameLine();
+    if(!selectedName.empty() && ImGui::Button("Dopasuj")) reframeCameraToEffect(currentParams);
 
     ImGui::InputText("##szukaj", searchBuffer, IM_ARRAYSIZE(searchBuffer));
     ImGui::SameLine();
-    if(ImGui::Button("X"))
-    {
-      searchBuffer[0] = '\0';
-    }
-    if (searchBuffer[0] == '\0')
-    {
-      ImGui::SameLine();
-      ImGui::TextDisabled("Szukaj...");
-    }
+    if(ImGui::Button("X")) searchBuffer[0] = '\0';
 
     ImGui::Separator();
     ImGui::BeginChild("lista_efektow");
@@ -827,63 +783,72 @@ int main(int argc, char** argv)
     for(const auto& n : filteredNames)
     {
       bool isSelected = (n == selectedName);
-      if(ImGui::Selectable(n.c_str(), isSelected))
+      std::string label = n + " [" + lib.getOriginFile(n) + "]";
+      
+      if(ImGui::Selectable(label.c_str(), isSelected))
       {
         if(n != selectedName)
         {
           selectedName = n;
-          loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPath);
+          loadSelectedEffect(selectedName, lib, currentParams, particles, spawnAccum, autoZoom, currentTexture, datPaths);
         }
       }
 
-      if (isSelected && selectionChangedByKeys)
-      {
-        ImGui::SetScrollHereY(0.5f);
-      }
+      if (isSelected && selectionChangedByKeys) ImGui::SetScrollHereY(0.5f);
     }
     ImGui::EndChild();
     ImGui::End();
 
-    // --- OKNO INFORMACJI O EFEKCIE ---
-    ImGui::SetNextWindowPos(ImVec2(330, 0), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(350, 320), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Informacje o Efekcie");
+    /* Szczegółowy Panel Inspekcyjny */
+    ImGui::SetNextWindowPos(ImVec2(350, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 480), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Inspector Szczegolow Efektu");
 
     if (!selectedName.empty())
     {
-        ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "Instancja: %s", selectedName.c_str());
-        ImGui::Separator();
+      ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Nazwa Instancji:");
+      ImGui::SameLine(); ImGui::Text("%s", selectedName.c_str());
 
-        ImGui::Text("Tekstura (visName): %s", currentParams.visName.empty() ? "(brak)" : currentParams.visName.c_str());
-        ImGui::Text("Emisja (ppsValue): %.2f", currentParams.ppsValue);
-        
-        ImGui::Separator();
-        ImGui::Text("Ksztalt (shpType): %s", currentParams.shpType.c_str());
-        ImGui::Text("Wymiary ksztaltu:  (%.1f, %.1f, %.1f)", currentParams.shpDim.x, currentParams.shpDim.y, currentParams.shpDim.z);
-        ImGui::Text("Objetosc (Volume): %s", currentParams.shpIsVolume ? "TAK" : "NIE");
+      ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Plik Skryptu (.DAT):");
+      ImGui::SameLine(); ImGui::Text("%s", currentParams.originDatFile.c_str());
 
-        ImGui::Separator();
-        ImGui::Text("Predkosc (velAvg +- var): %.1f (+-%.1f)", currentParams.velAvg, currentParams.velVar);
-        ImGui::Text("Czas zycia (lspAvg +- var): %.0f ms (+-%.0f ms)", currentParams.lspAvg, currentParams.lspVar);
-        
-        ImGui::Separator();
-        ImGui::Text("Grawitacja: (%.1f, %.1f, %.1f)", currentParams.gravity.x, currentParams.gravity.y, currentParams.gravity.z);
-        ImGui::Text("Rozmiar startowy: (%.1f, %.1f)", currentParams.sizeStart.x, currentParams.sizeStart.y);
-        ImGui::Text("Skala rozmiaru konca: %.2f", currentParams.sizeEndScale);
+      ImGui::Separator();
+      ImGui::TextUnformatted("--- TEKSTURA ---");
+      ImGui::Text("Deklarowana w Daedalus: %s", currentParams.visName.empty() ? "(Brak)" : currentParams.visName.c_str());
+      
+      if (!currentParams.loadedTexturePath.empty())
+      {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Sciezka pliku:");
+        ImGui::TextWrapped("%s", currentParams.loadedTexturePath.c_str());
+      }
+      else
+      {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Stan: Nieodnaleziona w katalogach/_compiled/VDF");
+      }
 
-        if (currentTexture.valid && currentTexture.id != 0)
-        {
-            ImGui::Separator();
-            ImGui::Text("Podglad tekstury:");
-            ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(64, 64));
-        }
+      if (currentTexture.valid && currentTexture.id != 0)
+      {
+        ImGui::Text("Rozmiar GL: %dx%d px", currentTexture.width, currentTexture.height);
+        ImGui::Image((void*)(intptr_t)currentTexture.id, ImVec2(80, 80));
+      }
+
+      ImGui::Separator();
+      ImGui::TextUnformatted("--- PARAMETRY EMISJI ---");
+      ImGui::Text("Szybkosć Emisji (ppsValue): %.2f", currentParams.ppsValue);
+      ImGui::Text("Ksztalt Emitera (shpType): %s", currentParams.shpType.c_str());
+      ImGui::Text("Wymiary Emitera: [%.1f, %.1f, %.1f]", currentParams.shpDim.x, currentParams.shpDim.y, currentParams.shpDim.z);
+      ImGui::Text("Predkosc Cząsteczek: %.1f (+-%.1f)", currentParams.velAvg, currentParams.velVar);
+      ImGui::Text("Czas Zycia: %.0f ms (+-%.0f ms)", currentParams.lspAvg, currentParams.lspVar);
+      ImGui::Text("Grawitacja: [%.1f, %.1f, %.1f]", currentParams.gravity.x, currentParams.gravity.y, currentParams.gravity.z);
+      ImGui::Text("Skala Rozmiaru (Start->End): [%.1f,%.1f] -> x%.2f", currentParams.sizeStart.x, currentParams.sizeStart.y, currentParams.sizeEndScale);
     }
     else
     {
-        ImGui::TextDisabled("Wybierz efekt z listy po lewej stronie.");
+      ImGui::TextDisabled("Wybierz efekt z listy, aby wyswietlic szczegoly.");
     }
     ImGui::End();
 
+    /* Poruszanie kamerą */
     if(!ImGui::GetIO().WantCaptureKeyboard)
     {
       float speed = g_cam.speed * dt * (g_keys[GLFW_KEY_LEFT_SHIFT] ? 3.f : 1.f);
@@ -904,26 +869,19 @@ int main(int argc, char** argv)
 
     if (!selectedName.empty())
     {
-        if (currentParams.ppsValue > 0.f)
+      if (currentParams.ppsValue > 0.f)
+      {
+        spawnAccum += currentParams.ppsValue * dt;
+        while (spawnAccum >= 1.f && particles.size() < MAX_PARTICLES)
         {
-            spawnAccum += currentParams.ppsValue * dt;
-            while (spawnAccum >= 1.f && particles.size() < MAX_PARTICLES)
-            {
-                spawnParticle(currentParams, particles);
-                spawnAccum -= 1.f;
-            }
+          spawnParticle(currentParams, particles);
+          spawnAccum -= 1.f;
         }
-        else
-        {
-            if (particles.empty())
-            {
-                int burstCount = 30;
-                for (int i = 0; i < burstCount && particles.size() < MAX_PARTICLES; ++i)
-                {
-                    spawnParticle(currentParams, particles);
-                }
-            }
-        }
+      }
+      else if (particles.empty())
+      {
+        for (int i = 0; i < 30 && particles.size() < MAX_PARTICLES; ++i) spawnParticle(currentParams, particles);
+      }
     }
 
     for(size_t i=0;i<particles.size();)
@@ -969,7 +927,6 @@ int main(int argc, char** argv)
     glClearColor(0.02f,0.02f,0.03f,1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Dalsza płaszczyzna obcinania (far clip = 100000) zapewnia brak znikania odległych efektów
     glm::mat4 proj = glm::perspective(glm::radians(FIXED_FOV), float(fbw)/float(fbh), 1.f, 100000.f);
     glm::mat4 view = g_cam.view();
 
@@ -988,20 +945,21 @@ int main(int argc, char** argv)
     glUseProgram(particleProg);
     glUniformMatrix4fv(glGetUniformLocation(particleProg,"uView"),1,GL_FALSE,glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(particleProg,"uProj"),1,GL_FALSE,glm::value_ptr(proj));
+    glUniform1f(glGetUniformLocation(particleProg, "uViewportHeight"), float(fbh));
 
     GLint useTexLoc = glGetUniformLocation(particleProg, "uUseTexture");
     GLint texLoc    = glGetUniformLocation(particleProg, "uTexture");
 
     if (currentTexture.valid && currentTexture.id != 0)
     {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, currentTexture.id);
-        glUniform1i(texLoc, 0);
-        glUniform1i(useTexLoc, 1);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, currentTexture.id);
+      glUniform1i(texLoc, 0);
+      glUniform1i(useTexLoc, 1);
     }
     else
     {
-        glUniform1i(useTexLoc, 0);
+      glUniform1i(useTexLoc, 0);
     }
 
     glBindVertexArray(pVao);
@@ -1012,19 +970,12 @@ int main(int argc, char** argv)
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     glfwSwapBuffers(win);
-
-    char title[300];
-    snprintf(title, sizeof(title), "pfxview | %s | zywych czasteczek: %zu",
-             selectedName.empty() ? "(brak wyboru)" : selectedName.c_str(), particles.size());
-    glfwSetWindowTitle(win, title);
   }
 
   currentTexture.free();
-
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
-
   glfwTerminate();
   return 0;
 }
