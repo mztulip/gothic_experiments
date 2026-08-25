@@ -124,7 +124,8 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     int g_formulaMode, int g_lightcorrection, int g_tonemap, int g_lightIntensity, bool g_fogEnabled, float g_fogDensity,
     std::vector<LoadedLight>& worldLights,
     glm::mat4& view,
-    glm::mat4& proj
+    glm::mat4& proj,
+    float fps
     )
 {
     // ---- HUD tekstowy w oknie (nie tylko w tytule) ----
@@ -135,6 +136,10 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     char line[256];
     float ty = 10.f;
     const float lh = 14.f; // odstep miedzy liniami
+
+        // ---- FPS na samej gorze, dobrze widoczne ----
+    snprintf(line, sizeof(line), "FPS: %.1f  (%.2f ms/klatke)", fps, fps > 0.f ? 1000.f/fps : 0.f);
+    text.drawLine(10.f, ty, line, 255,255,100,255, textOrtho); ty += lh;
 
     snprintf(line, sizeof(line), "kamera: x=%.1f  y=%.1f  z=%.1f", g_cam.pos.x, g_cam.pos.y, g_cam.pos.z);
     text.drawLine(10.f, ty, line, 255,255,255,255, textOrtho); ty += lh;
@@ -156,22 +161,25 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
          g_fogEnabled ? "ON" : "OFF", g_fogDensity);
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
 
-    // ---- etykiety "range: X" nad kazdym swiatlem ----
+    // ---- etykiety "range: X" nad kazdym swiatlem - tylko w promieniu 1000 od kamery ----
+    const float labelMaxDist = 1000.f;
+
     for(auto& l : worldLights)
     {
-    glm::vec3 labelPos = l.pos + glm::vec3(0.f, 40.f, 0.f); // troche nad boxem-markerem (half=15)
-    glm::vec2 screenPos;
-    if(worldToScreen(labelPos, view, proj, fbw, fbh, screenPos))
+        float distToCam = glm::length(l.pos - g_cam.pos);
+        if(distToCam > labelMaxDist) continue; // za daleko - pomijamy etykiete
+
+        glm::vec3 labelPos = l.pos + glm::vec3(0.f, 40.f, 0.f);
+        glm::vec2 screenPos;
+        if(worldToScreen(labelPos, view, proj, fbw, fbh, screenPos))
         {
             char rangeLine[64];
             snprintf(rangeLine, sizeof(rangeLine), "range: %.0f", l.range);
-            // wyśrodkowanie w poziomie "na oko" (stb_easy_font ~ 6-7px/znak przy skali domyslnej)
             float textWidth = float(strlen(rangeLine)) * 6.f;
             text.drawLine(screenPos.x - textWidth * 0.5f, screenPos.y, rangeLine,
                         255, 255, 0, 255, textOrtho);
         }
     }
-
 
     glEnable(GL_DEPTH_TEST);
 }

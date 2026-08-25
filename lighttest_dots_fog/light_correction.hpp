@@ -9,9 +9,10 @@ struct RangeMapPoint {
 
 
 static const RangeMapPoint RANGE_MAP[] = {
-  {   15.f,  50.f },  // LIGHT
-  {   80.f,  60.f },  // NW_STANDART_DARKBLUE
-  {  100.f,  50.f },  // FIRESMALL, AURA
+  {   15.f,  100.f }, 
+  {   50.f,  100.f },  
+  {   80.f,  100.f },  // NW_STANDART_DARKBLUE
+  {  100.f,  100.f },  // FIRESMALL, AURA
   {  150.f,  100.f },  // DEFAULTLIGHT_DARKBLUE
   {  200.f,  190.f },  // CITY
   {  250.f,  200.f },  // NW_STANDART_DARKBLUE, NW_STANDART_FIRE_DYNAMIC

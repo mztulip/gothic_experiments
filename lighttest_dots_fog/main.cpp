@@ -861,10 +861,23 @@ GLuint quadVao = makeFullscreenQuad();
   int lastPresetIdx = g_presetIdx;
 
   double lastTime = glfwGetTime();
-  while(!glfwWindowShouldClose(win)) {
+  float  g_fpsSmoothed = 0.f;
+
+  while(!glfwWindowShouldClose(win)) 
+  {
     double now = glfwGetTime();
     float dt = float(now-lastTime);
     lastTime = now;
+
+    // wygladzanie EMA (exponential moving average) - stabilny odczyt zamiast szumu klatka-do-klatki
+    if(dt > 0.0001f) 
+    {
+      float instantFps = 1.f / dt;
+      const float smoothing = 0.9f; // wiekszy = wolniej reaguje, stabilniejszy odczyt
+      g_fpsSmoothed = g_fpsSmoothed <= 0.f
+        ? instantFps
+        : g_fpsSmoothed * smoothing + instantFps * (1.f - smoothing);
+    }
 
     glfwPollEvents();
 
@@ -1077,7 +1090,7 @@ GLuint quadVao = makeFullscreenQuad();
     drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode,
        g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity,
        worldLights,
-       view, proj
+       view, proj, g_fpsSmoothed
       );
 
     glfwSwapBuffers(win);
