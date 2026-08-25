@@ -775,6 +775,11 @@ int main(int argc, char** argv) {
   glDeleteShader(lightVs);
   glDeleteShader(lightFs);
 
+  GLint locLightPos   = glGetUniformLocation(lightProg, "uLightPos");
+  GLint locLightColor = glGetUniformLocation(lightProg, "uLightColor");
+  GLint locRange      = glGetUniformLocation(lightProg, "uRange");
+
+
 GLuint quadVao = makeFullscreenQuad();
 
 // gbufor inicjujemy dopiero w petli (znamy tam fbw/fbh), patrz ensureSize() nizej
@@ -841,6 +846,10 @@ GLuint quadVao = makeFullscreenQuad();
   std::vector<std::vector<Vertex>> fogPerLight;
   std::vector<GLuint> fogVaoPerLight;
   std::vector<size_t> fogCountPerLight;
+
+  std::vector<const LoadedLight*> visibleLights;
+  visibleLights.reserve(worldLights.size());
+
 
   for(auto& l : worldLights)
   {
@@ -963,21 +972,41 @@ GLuint quadVao = makeFullscreenQuad();
     // ============================================================
     // PASS 3: kazde swiatlo, addytywnie, fullscreen quad (BEZ redrawu siatki)
     // ============================================================
+    visibleLights.clear();
+    for(auto& l : worldLights)
+    {
+      float distToCam = glm::length(l.pos - g_cam.pos);
+      if(distToCam > l.range * 10.0f) continue; // zbyt daleko - i tak wygasa do 0
+      visibleLights.push_back(&l);
+    }
+
+
+    glEnable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glUniform1i(glGetUniformLocation(lightProg,"uAmbientOnly"), 0);
     glUniform1i(glGetUniformLocation(lightProg,"uFormulaMode"), g_formulaMode);
     glUniform1f(glGetUniformLocation(lightProg,"uLightIntensity"), g_lightIntensity);
 
-    for(auto& l : worldLights)
+
+    for(auto* lp : visibleLights)
     {
+      const auto& l = *lp;
       float effRange = (g_formulaMode == 0 || g_lightcorrection == 0) ? l.range : correctedRange(l.range);
-      glUniform3fv(glGetUniformLocation(lightProg,"uLightPos"), 1, glm::value_ptr(l.pos));
-      glUniform3fv(glGetUniformLocation(lightProg,"uLightColor"), 1, glm::value_ptr(l.color));
-      glUniform1f(glGetUniformLocation(lightProg,"uRange"), effRange);
-      glDrawArrays(GL_TRIANGLES, 0, 6); // <-- 6 wierzcholkow zamiast calej siatki swiata!
+
+      int x0,y0,x1,y1;
+      if(!lightScissorRect(l.pos, effRange, view, proj, fbw, fbh, x0,y0,x1,y1))
+        continue; // bbox calkowicie poza ekranem - pomijamy
+
+      glScissor(x0, y0, x1-x0, y1-y0);
+
+      glUniform3fv(locLightPos, 1, glm::value_ptr(l.pos));
+      glUniform3fv(locLightColor, 1, glm::value_ptr(l.color));
+      glUniform1f(locRange, effRange);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
     }
 
+    glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
 
     glUseProgram(prog);
