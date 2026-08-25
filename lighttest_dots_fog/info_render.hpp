@@ -157,7 +157,7 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
              g_formulaMode==0 ? "LINIA" : "OBECNA", g_lightcorrection==0 ? "BRAK" : "OBECNA", g_tonemap ? "ON" : "OFF", g_lightIntensity);
     text.drawLine(10.f, ty, line, 150,220,255,255, textOrtho); ty += lh;
 
-    snprintf(line, sizeof(line), "mgla=%s  gestosc=%.2f  [F] toggle [O/P] gestosc",
+    snprintf(line, sizeof(line), "mgla=%s  gestosc=%.2f  [F] toggle [O/P] gestosc [N] korekcja ",
          g_fogEnabled ? "ON" : "OFF", g_fogDensity);
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
 
@@ -167,19 +167,59 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     for(auto& l : worldLights)
     {
         float distToCam = glm::length(l.pos - g_cam.pos);
-        if(distToCam > labelMaxDist) continue; // za daleko - pomijamy etykiete
+        if(distToCam > labelMaxDist)
+            continue;
 
         glm::vec3 labelPos = l.pos + glm::vec3(0.f, 40.f, 0.f);
         glm::vec2 screenPos;
-        if(worldToScreen(labelPos, view, proj, fbw, fbh, screenPos))
-        {
-            char rangeLine[64];
-            snprintf(rangeLine, sizeof(rangeLine), "range: %.0f", l.range);
-            float textWidth = float(strlen(rangeLine)) * 6.f;
-            text.drawLine(screenPos.x - textWidth * 0.5f, screenPos.y, rangeLine,
-                        255, 255, 0, 255, textOrtho);
-        }
+
+        if(!worldToScreen(labelPos, view, proj, fbw, fbh, screenPos))
+            continue;
+
+        // Convert light color from [0, 1] to [0, 255]
+        int r = static_cast<int>(
+            glm::clamp(l.color.r, 0.f, 1.f) * 255.f
+        );
+
+        int g = static_cast<int>(
+            glm::clamp(l.color.g, 0.f, 1.f) * 255.f
+        );
+
+        int b = static_cast<int>(
+            glm::clamp(l.color.b, 0.f, 1.f) * 255.f
+        );
+
+        char rangeLine[64];
+        char colorLine[64];
+
+        snprintf(rangeLine, sizeof(rangeLine),
+                "range: %.0f", l.range);
+
+        snprintf(colorLine, sizeof(colorLine),
+                "color: (%d,%d,%d)", r, g, b);
+
+        // Center the text horizontally
+        float rangeWidth = float(strlen(rangeLine)) * 6.f;
+        float colorWidth = float(strlen(colorLine)) * 6.f;
+
+        text.drawLine(
+            screenPos.x - rangeWidth * 0.5f,
+            screenPos.y,
+            rangeLine,
+            255, 255, 255, 255,
+            textOrtho
+        );
+
+        text.drawLine(
+            screenPos.x - colorWidth * 0.5f,
+            screenPos.y + 12.f,
+            colorLine,
+            255, 255, 255,
+            255,
+            textOrtho
+        );
     }
+
 
     glEnable(GL_DEPTH_TEST);
 }

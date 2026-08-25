@@ -976,7 +976,7 @@ GLuint quadVao = makeFullscreenQuad();
     for(auto& l : worldLights)
     {
       float distToCam = glm::length(l.pos - g_cam.pos);
-      if(distToCam > l.range * 10.0f) continue; // zbyt daleko - i tak wygasa do 0
+      if(distToCam > l.range * 20.0f) continue; // zbyt daleko - i tak wygasa do 0
       visibleLights.push_back(&l);
     }
 
@@ -1059,12 +1059,6 @@ GLuint quadVao = makeFullscreenQuad();
           float effectiveRange = correctedRange(l.range);
           glUniform1f(glGetUniformLocation(prog,"uRange"), effectiveRange);
         }
-
-
-        // glUniform1i(glGetUniformLocation(prog,"uIsFog"), 0);
-        // glBindVertexArray(floorVao);
-        // glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount));
-
 
         if(g_fogEnabled)
         {
