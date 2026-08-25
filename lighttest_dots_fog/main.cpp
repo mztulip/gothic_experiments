@@ -25,6 +25,7 @@
 #include "light_correction.hpp"
 #include "shader_utils.hpp"
 #include "light.hpp"
+#include "gbuffer.hpp"
 
 static inline glm::vec3 zenPosToGL(float x, float y, float z)
 {
@@ -103,6 +104,148 @@ static const Preset PRESETS[] = {
 
 static int g_presetIdx = 1; // start na FIRE - to ten najbardziej sporny
 
+static GLuint makeFullscreenQuad() {
+  float verts[] = {
+    -1.f,-1.f,  1.f,-1.f,  1.f,1.f,
+    -1.f,-1.f,  1.f,1.f,  -1.f,1.f,
+  };
+  GLuint vao, vbo;
+  glGenVertexArrays(1, &vao);
+  glGenBuffers(1, &vbo);
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
+  return vao;
+}
+
+// ---------------------------------------------------------------------
+// Wspolna logika oswietlenia - uzywana zarowno przez stary forward-shader
+// (markery/mgla) jak i nowy deferred light-pass. Bez "#version" - jest
+// doklejana programowo po nim, patrz buildFragSource() nizej.
+// ---------------------------------------------------------------------
+static const char* LIGHTING_COMMON_SRC = R"GLSL(
+vec3 srgbDecode(vec3 c) { return pow(c, vec3(2.2)); }
+
+vec3 acesTonemapInv(vec3 x) {
+  float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return (-0.59 * x + 0.03 - sqrt(-1.0127 * x*x + 1.3702 * x + 0.0009)) / (2.0 * (2.43*x - 2.51));
+}
+
+vec3 textureAlbedo(vec3 rgb) {
+  vec3 linear = srgbDecode(rgb);
+  return acesTonemapInv(linear*0.78+0.001) * 5.0;
+}
+
+vec3 ACESFilm(vec3 x) {
+  float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+// jedno miejsce prawdy dla formuly atenuacji - parametry przekazywane
+// jawnie (nie przez globalne uniformy), zeby ta funkcja byla niezalezna
+// od kolejnosci deklaracji uniformow w konkretnym shaderze
+float attenFor(vec3 ldir, float dist, float range, int formulaMode, float lightIntensity) {
+  if(formulaMode==0) {
+    const float ATT1 = 0.009;
+    return (dist>range) ? 0.0 : 1.0/max(ATT1*dist, 0.02);
+  } else {
+    float factor = dot(ldir,ldir) / (range*range);
+    if(factor > 1.0) return 0.0;
+    float sf = max(1.0 - factor*factor, 0.0);
+    return (1.0/max(factor,0.005)) * (sf*sf) * lightIntensity;
+  }
+}
+)GLSL";
+
+static const char* GEOM_VERT_SRC = R"GLSL(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProj;
+
+out vec3 vWorldPos;
+out vec3 vNormal;
+
+void main() {
+  vec4 world = uModel * vec4(aPos, 1.0);
+  vWorldPos = world.xyz;
+  vNormal   = mat3(uModel) * aNormal;
+  gl_Position = uProj * uView * world;
+}
+)GLSL";
+
+static const char* GEOM_FRAG_SRC = R"GLSL(
+#version 330 core
+in vec3 vWorldPos;
+in vec3 vNormal;
+
+layout(location = 0) out vec4 outAlbedo;
+layout(location = 1) out vec4 outNormal;
+layout(location = 2) out vec4 outWorldPos;
+
+uniform vec3 uAlbedo;
+
+void main() {
+  outAlbedo   = vec4(uAlbedo, 1.0);
+  outNormal   = vec4(normalize(vNormal), 0.0);
+  outWorldPos = vec4(vWorldPos, 1.0);
+}
+)GLSL";
+
+
+static const char* LIGHT_VERT_SRC = R"GLSL(
+#version 330 core
+layout(location = 0) in vec2 aPos;
+out vec2 vUV;
+void main() {
+  vUV = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)GLSL";
+
+static const char* LIGHT_FRAG_SRC = R"GLSL(
+in vec2 vUV;
+out vec4 FragColor;
+
+uniform sampler2D uGAlbedo;
+uniform sampler2D uGNormal;
+uniform sampler2D uGWorldPos;
+
+uniform vec3  uLightPos;
+uniform vec3  uLightColor;
+uniform float uRange;
+uniform float uLightIntensity;
+uniform int   uFormulaMode;
+uniform int   uAmbientOnly;
+
+void main() {
+  vec3 albedo   = texture(uGAlbedo, vUV).rgb;
+  vec3 normal   = texture(uGNormal, vUV).rgb;
+  vec3 worldPos = texture(uGWorldPos, vUV).rgb;
+
+  if(uAmbientOnly==1) {
+    float skyLight = max(0.0, normal.y) * 0.15;
+    FragColor = vec4(albedo * (0.08 + skyLight), 1.0);
+    return;
+  }
+
+  vec3  ldir = uLightPos - worldPos;
+  float dist = length(ldir);
+  float lambert = max(0.0, dot(normalize(ldir), normal));
+
+  float atten = attenFor(ldir, dist, uRange, uFormulaMode, uLightIntensity);
+
+  vec3 linear = textureAlbedo(albedo);
+  FragColor = vec4(linear * uLightColor * lambert * atten * 0.25, 1.0);
+}
+)GLSL";
+
 // ---------------------------------------------------------------------
 // Shadery - GLSL wklejony jako string, logika fragmentow 1:1 z light.frag
 // ---------------------------------------------------------------------
@@ -146,141 +289,77 @@ void main() {
 )GLSL";
 
 static const char* FRAG_SRC = R"GLSL(
-    #version 330 core
-    in vec3 vWorldPos;
-    in vec3 vNormal;
-    out vec4 FragColor;
+in vec3 vWorldPos;
+in vec3 vNormal;
+out vec4 FragColor;
 
-    uniform vec3  uAlbedo; //Określa kolor tła
-    uniform vec3  uLightPos;
-    uniform vec3  uLightColor;
-    uniform float uRange;
-    uniform float uLightIntensity;
-    uniform int   uFormulaMode;   // 0 = linia (replika oryginalu), 1 = obecna (Karis+Range^2)
-    uniform int   uTonemap;       // 0 = brak, 1 = ACES (per-kanal, Narkowicz fit)
-    uniform bool  uIsMarker;      // true dla kostki-znacznika swiatla - rysuj bez oswietlenia
-    uniform int   uAmbientOnly;   // 1 = tylko ambient (pierwszy przebieg), 0 = tylko wklad tego swiatla (przebiegi addytywne)
-    uniform bool  uIsFog;
-    uniform float uFogDensity;
+uniform vec3  uAlbedo;
+uniform vec3  uLightPos;
+uniform vec3  uLightColor;
+uniform float uRange;
+uniform float uLightIntensity;
+uniform int   uFormulaMode;
+uniform int   uTonemap;
+uniform bool  uIsMarker;
+uniform int   uAmbientOnly;
+uniform bool  uIsFog;
+uniform float uFogDensity;
 
-    //Academy Color Encoding System — system zarządzania kolorem opracowany przez Academy of Motion Picture Arts and Sciences
-    //ta funkcja bierze kolor i ściska go do zakresu 0-1
-    vec3 ACESFilm(vec3 x)
+void main()
+{
+    if(uIsMarker)
     {
-        // Narkowicz 2015, popularna aproksymacja ACES stosowana per-kanal -
-        // dokladnie ten sam charakter co domyslny tonemapping.glsl w OpenGothic.
-        float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-        return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+        FragColor = vec4(uLightColor, 1.0);
+        return;
     }
 
-    vec3 acesTonemapInv(vec3 x)
+    float fogAlpha = 1.0;
+    if(uIsFog)
     {
-      float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-      return (-0.59 * x + 0.03 - sqrt(-1.0127 * x*x + 1.3702 * x + 0.0009)) / (2.0 * (2.43*x - 2.51));
-    }
-        
-
-    vec3 srgbDecode(vec3 c) { return pow(c, vec3(2.2)); }
-
-    vec3 textureAlbedo(vec3 rgb)
-    {
-      vec3 linear = srgbDecode(rgb);
-      return acesTonemapInv(linear*0.78+0.001) * 5.0;
+        vec2 c = gl_PointCoord*2.0 - 1.0;
+        float r2 = dot(c,c);
+        if(r2 > 1.0) discard;
+        fogAlpha = 1.0 - r2;
     }
 
-    void main()
+    vec3 hdrColor;
+
+    if(uAmbientOnly==1)
     {
-        //Jeśli akurat rysujemy markery świateł
-        //To ma on kolor źródła światła
-        if(uIsMarker)
-        {
-            FragColor = vec4(uLightColor, 1.0);
-            return;
-        }
-
-        float fogAlpha = 1.0;
-        if(uIsFog)
-        {
-            //gl_PointCoord istnieje tylko dla GL_POINT jest to vec2 o zakresie od 0 do góry do dołu. Bo punkt może mieć wymiary w pixelach pewne i to się odnosi do tego punktu
-            vec2 c = gl_PointCoord*2.0 - 1.0; //Przeskalowanie aby zakres był -1 do 1
-            float r2 = dot(c,c); //odległość od środka punktu
-            if(r2 > 1.0) discard; //odrzucamy wszystko powyżej 1 więc mamy koło
-            fogAlpha = 1.0 - r2; //jest to współczynnik do przyciemniania im bardziej od środka. Wiec kropka mgły jest najjaśniejsza w srodku i mniej na zewnątrz.
-            
-            // --- DEBUG: wymuszony jaskrawy kolor, ignorujemy density/atten/tonemap ---
-            //FragColor = vec4(1.0, 0.0, 1.0, 1.0); // magenta
-            //return;
-        }
-
-        vec3 hdrColor;
-
-        if(uAmbientOnly==1) //rysujemy mesh świata
-        {
-            // pierwszy przebieg (bez blendingu) - tylko ambient, ustawia tez depth buffer
-          //  hdrColor = uAlbedo * 0.03;
-            //hdrColor = uAlbedo * 0.50;
-              float skyLight = max(0.0, normalize(vNormal).y) * 0.15; // gorne powierzchnie troche jasniejsze
-              hdrColor = uAlbedo * (0.08 + skyLight);
-        } 
-        else //rysujemy źródła światła i ich markery i całą reszte
-        {
-            // kolejne przebiegi (addytywny blending GL_ONE,GL_ONE) - wklad TYLKO tego
-            // jednego swiatla, bez ambientu (juz doliczony raz w pierwszym przebiegu)
-            vec3  normal = normalize(vNormal);
-            vec3  ldir   = uLightPos - vWorldPos;
-            float dist   = length(ldir);
-            //To uwzglednia kąt padania swiatla na powierzchnie
-            float lambert = uIsFog ? 1.0 : max(0.0, dot(normalize(ldir), normal));
-
-            float atten;
-            if(uFormulaMode==0) //to tryb wyswietlania jak w oryginalnym silniku Gothic z D3D7, przełączane klawiszem M
-            {
-                // "linia": replika zmierzonego oryginalu D3D7/8 - 1/(Att1*d), Att1=0.009,
-                // z twardym cap blisko zrodla (0.02) i twardym odcieciem na Range.
-                const float ATT1 = 0.009;
-                if(dist>uRange)
-                {
-                    atten = 0.0;
-                }
-                else
-                {
-                    atten = 1.0/max(ATT1*dist, 0.02);
-                }
-            }
-            else
-            {
-              float distanceSquare = dot(ldir, ldir);
-              float factor = distanceSquare / (uRange * uRange);
-
-              if(factor > 1.0)
-                  atten = 0.0;
-              else
-              {
-                float smoothFactor = max(1.0 - factor * factor, 0.0);
-                atten = (1.0 / max(factor, 0.005)) * (smoothFactor * smoothFactor);  // <- bez "lambert /"
-                atten *= uLightIntensity;
-              }
-            }
-
-            vec3 linear = textureAlbedo(uAlbedo);
-            hdrColor = linear * uLightColor * lambert * atten * 0.25;
-
-            //Jeśli rysujemy kropki mgły to trzeba uwzględnić fogALpha 
-            if(uIsFog) hdrColor *= uFogDensity * fogAlpha;
-
-        }
-
-        vec3 outColor;
-        if(uTonemap==1) //Przełączanie klawiszem T
-            outColor = ACESFilm(hdrColor);
-        else
-            outColor = clamp(hdrColor, 0.0, 1.0); // zwykly LDR clamp - jak D3D7/8
-
-        FragColor = vec4(outColor, 1.0);
+        float skyLight = max(0.0, normalize(vNormal).y) * 0.15;
+        hdrColor = uAlbedo * (0.08 + skyLight);
     }
+    else
+    {
+        vec3  normal = normalize(vNormal);
+        vec3  ldir   = uLightPos - vWorldPos;
+        float dist   = length(ldir);
+        float lambert = uIsFog ? 1.0 : max(0.0, dot(normalize(ldir), normal));
+
+        float atten = attenFor(ldir, dist, uRange, uFormulaMode, uLightIntensity);
+
+        vec3 linear = textureAlbedo(uAlbedo);
+        hdrColor = linear * uLightColor * lambert * atten * 0.25;
+
+        if(uIsFog) hdrColor *= uFogDensity * fogAlpha;
+    }
+
+    vec3 outColor;
+    if(uTonemap==1)
+        outColor = ACESFilm(hdrColor);
+    else
+        outColor = clamp(hdrColor, 0.0, 1.0);
+
+    FragColor = vec4(outColor, 1.0);
+}
 )GLSL";
 
-
+// Skleja "#version" + wspolna logike oswietlenia + cialo konkretnego
+// fragment shadera - GLSL nie ma #include, wiec robimy to programowo w C++.
+static std::string buildFragSource(const char* body)
+{
+  return std::string("#version 330 core\n") + LIGHTING_COMMON_SRC + body;
+}
 
 // ---------------------------------------------------------------------
 // Pomoce do budowy geometrii (podloga, kostka)
@@ -567,6 +646,7 @@ static std::vector<Vertex> buildFogPoints(glm::vec3 bmin, glm::vec3 bmax, int co
 }
 
 
+static GBuffer g_gbuf;
 
 static Camera g_cam;
 static bool   g_keys[512] = {};
@@ -676,10 +756,28 @@ int main(int argc, char** argv) {
   glEnable(GL_DEPTH_TEST);
 
   GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
-  GLuint fs = compileShader(GL_FRAGMENT_SHADER, FRAG_SRC);
+  std::string fragFullSrc = buildFragSource(FRAG_SRC);
+  GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());
   GLuint prog = linkProgram(vs, fs);
   glDeleteShader(vs);
   glDeleteShader(fs);
+
+  GLuint geomVs = compileShader(GL_VERTEX_SHADER, GEOM_VERT_SRC);
+  GLuint geomFs = compileShader(GL_FRAGMENT_SHADER, GEOM_FRAG_SRC); // bez zmian, nie uzywa wspolnej logiki
+  GLuint geomProg = linkProgram(geomVs, geomFs);
+  glDeleteShader(geomVs);
+  glDeleteShader(geomFs);
+
+  GLuint lightVs = compileShader(GL_VERTEX_SHADER, LIGHT_VERT_SRC);
+  std::string lightFragFullSrc = buildFragSource(LIGHT_FRAG_SRC);
+  GLuint lightFs = compileShader(GL_FRAGMENT_SHADER, lightFragFullSrc.c_str());
+  GLuint lightProg = linkProgram(lightVs, lightFs);
+  glDeleteShader(lightVs);
+  glDeleteShader(lightFs);
+
+GLuint quadVao = makeFullscreenQuad();
+
+// gbufor inicjujemy dopiero w petli (znamy tam fbw/fbh), patrz ensureSize() nizej
 
   auto makeVao = [](const std::vector<Vertex>& verts) {
     GLuint vao, vbo;
@@ -780,6 +878,7 @@ int main(int argc, char** argv) {
 
     int fbw, fbh;
     glfwGetFramebufferSize(win, &fbw, &fbh);
+    g_gbuf.ensureSize(fbw, fbh); // realokuje tekstury tylko gdy zmienil sie rozmiar okna
     glViewport(0, 0, fbw, fbh);
     glClearColor(0.02f, 0.02f, 0.03f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -799,25 +898,81 @@ int main(int argc, char** argv) {
     glm::mat4 model(1.f);
     glUniformMatrix4fv(glGetUniformLocation(prog,"uModel"), 1, GL_FALSE, glm::value_ptr(model));
 
-    // przebieg 1: sam ambient, bez blendingu (ustawia tez depth buffer podlogi)
-    //czyli rysujemy siatke pomieszczenia stałym kolorem
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glUniform1i(glGetUniformLocation(prog,"uAmbientOnly"), 1);
-    glBindVertexArray(floorVao);
-    glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount));
 
-    // przebiegi 2..N: po jednym na kazde swiatlo, addytywnie (GL_ONE,GL_ONE),
-    // bez zapisu do depth buffer (ta sama geometria, ten sam depth co wyzej)
-    //czyli teraz rysujemy kolroki od źródeł światła oraz boxy w miejscach źródeł światła
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
     glUniform1i(glGetUniformLocation(prog,"uAmbientOnly"), 0);
     glUniform1f(glGetUniformLocation(prog,"uPointSizeBase"), g_fogPointSize);
     glUniform1f(glGetUniformLocation(prog,"uFogDensity"), g_fogDensity);
 
+    // ============================================================
+    // PASS 1: geometria swiata - RAZ, do G-bufora
+    // ============================================================
+    glBindFramebuffer(GL_FRAMEBUFFER, g_gbuf.fbo);
+    glViewport(0, 0, g_gbuf.w, g_gbuf.h);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glUseProgram(geomProg);
+    glUniformMatrix4fv(glGetUniformLocation(geomProg,"uView"), 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(glGetUniformLocation(geomProg,"uProj"), 1, GL_FALSE, glm::value_ptr(proj));
+    glUniformMatrix4fv(glGetUniformLocation(geomProg,"uModel"), 1, GL_FALSE, glm::value_ptr(glm::mat4(1.f)));
+    glUniform3f(glGetUniformLocation(geomProg,"uAlbedo"), 0.6f, 0.6f, 0.62f);
+    glBindVertexArray(floorVao);
+    glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount)); // <-- TYLKO RAZ na klatke
+
+    // skopiuj glebie do domyslnego framebuffera, zeby markery/mgla mialy poprawny depth test
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_gbuf.fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, g_gbuf.w, g_gbuf.h, 0, 0, fbw, fbh, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+    // ============================================================
+    // PASS 2: ambient na ekran (fullscreen quad, brak blendingu)
+    // ============================================================
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, fbw, fbh);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_FALSE);
+
+    glUseProgram(lightProg);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_gbuf.texAlbedo);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_gbuf.texNormal);
+    glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, g_gbuf.texWorldPos);
+    glUniform1i(glGetUniformLocation(lightProg,"uGAlbedo"), 0);
+    glUniform1i(glGetUniformLocation(lightProg,"uGNormal"), 1);
+    glUniform1i(glGetUniformLocation(lightProg,"uGWorldPos"), 2);
+    glUniform1i(glGetUniformLocation(lightProg,"uAmbientOnly"), 1);
+    glBindVertexArray(quadVao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // ============================================================
+    // PASS 3: kazde swiatlo, addytywnie, fullscreen quad (BEZ redrawu siatki)
+    // ============================================================
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glUniform1i(glGetUniformLocation(lightProg,"uAmbientOnly"), 0);
+    glUniform1i(glGetUniformLocation(lightProg,"uFormulaMode"), g_formulaMode);
+    glUniform1f(glGetUniformLocation(lightProg,"uLightIntensity"), g_lightIntensity);
+
+    for(auto& l : worldLights)
+    {
+      float effRange = (g_formulaMode == 0 || g_lightcorrection == 0) ? l.range : correctedRange(l.range);
+      glUniform3fv(glGetUniformLocation(lightProg,"uLightPos"), 1, glm::value_ptr(l.pos));
+      glUniform3fv(glGetUniformLocation(lightProg,"uLightColor"), 1, glm::value_ptr(l.color));
+      glUniform1f(glGetUniformLocation(lightProg,"uRange"), effRange);
+      glDrawArrays(GL_TRIANGLES, 0, 6); // <-- 6 wierzcholkow zamiast calej siatki swiata!
+    }
+
+    glDisable(GL_BLEND);
+
+    glUseProgram(prog);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
 
 
     // //rYSUJEMY SWIATŁA
@@ -864,9 +1019,9 @@ int main(int argc, char** argv) {
         }
 
 
-        glUniform1i(glGetUniformLocation(prog,"uIsFog"), 0);
-        glBindVertexArray(floorVao);
-        glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount));
+        // glUniform1i(glGetUniformLocation(prog,"uIsFog"), 0);
+        // glBindVertexArray(floorVao);
+        // glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount));
 
 
         if(g_fogEnabled)
