@@ -11,6 +11,7 @@
 #include "camera.hpp"
 #include "stb_easy_font.h"
 #include "shader_utils.hpp"
+#include "light.hpp"
 
 // ---------------------------------------------------------------------
 // Prosty shader 2D (ortho, przestrzen ekranu w pikselach) do tekstu HUD
@@ -120,7 +121,11 @@ static bool worldToScreen(const glm::vec3& worldPos,
 }
 
 static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, const char* hudPreset, float hudRange, float hudDist,
-    int g_formulaMode, int g_lightcorrection, int g_tonemap, int g_lightIntensity, bool g_fogEnabled, float g_fogDensity)
+    int g_formulaMode, int g_lightcorrection, int g_tonemap, int g_lightIntensity, bool g_fogEnabled, float g_fogDensity,
+    std::vector<LoadedLight>& worldLights,
+    glm::mat4& view,
+    glm::mat4& proj
+    )
 {
     // ---- HUD tekstowy w oknie (nie tylko w tytule) ----
     glm::mat4 textOrtho = glm::ortho(0.f, float(fbw), float(fbh), 0.f, -1.f, 1.f);
@@ -150,6 +155,22 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     snprintf(line, sizeof(line), "mgla=%s  gestosc=%.2f  [F] toggle [O/P] gestosc",
          g_fogEnabled ? "ON" : "OFF", g_fogDensity);
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
+
+    // ---- etykiety "range: X" nad kazdym swiatlem ----
+    for(auto& l : worldLights)
+    {
+    glm::vec3 labelPos = l.pos + glm::vec3(0.f, 40.f, 0.f); // troche nad boxem-markerem (half=15)
+    glm::vec2 screenPos;
+    if(worldToScreen(labelPos, view, proj, fbw, fbh, screenPos))
+        {
+            char rangeLine[64];
+            snprintf(rangeLine, sizeof(rangeLine), "range: %.0f", l.range);
+            // wyśrodkowanie w poziomie "na oko" (stb_easy_font ~ 6-7px/znak przy skali domyslnej)
+            float textWidth = float(strlen(rangeLine)) * 6.f;
+            text.drawLine(screenPos.x - textWidth * 0.5f, screenPos.y, rangeLine,
+                        255, 255, 0, 255, textOrtho);
+        }
+    }
 
 
     glEnable(GL_DEPTH_TEST);

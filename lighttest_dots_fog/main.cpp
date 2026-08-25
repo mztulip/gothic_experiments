@@ -24,17 +24,7 @@
 #include "camera.hpp"
 #include "light_correction.hpp"
 #include "shader_utils.hpp"
-
-// ---------------------------------------------------------------------
-// Wczytywanie prawdziwych swiatel z pliku .ZEN (ZenKit) - te same wartosci
-// Range/kolor/preset co w grze, 
-// ---------------------------------------------------------------------
-struct LoadedLight {
-  glm::vec3   pos;
-  float       range;
-  glm::vec3   color;
-  std::string preset;
-  };
+#include "light.hpp"
 
 static inline glm::vec3 zenPosToGL(float x, float y, float z)
 {
@@ -929,7 +919,11 @@ int main(int argc, char** argv) {
     
 
 
-    drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode, g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity);
+    drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode,
+       g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity,
+       worldLights,
+       view, proj
+      );
 
     glfwSwapBuffers(win);
 
