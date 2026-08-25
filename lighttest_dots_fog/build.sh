@@ -82,7 +82,7 @@ build_program() {
     $LIBS
 }
 
-build_program "main.cpp"    "light"
+build_program "main.cpp"    "lighttest"
 
 echo
 echo "=========================================="
@@ -90,5 +90,5 @@ echo " Build successful"
 echo "=========================================="
 echo
 echo "Run:"
-echo "  ./light"
+echo "  ./lighttest"
 echo

@@ -1,46 +1,3 @@
-/*
-
-   cmake .. -DZENKIT_INCLUDE_DIR=/home/mz/gothic/zen/OpenGothic/lib/ZenKit/include \
-             -DZENKIT_LIB=/home/mz/gothic/zen/OpenGothic/build/lib/ZenKit/libzenkit.a \
-             -DSQUISH_OBJECTS_DIR=/home/mz/gothic/zen/OpenGothic/build/lib/ZenKit/vendor/libsquish/CMakeFiles/squish.dir/
-
-  https://www.worldofgothic.de/?go=moddb&action=view&fileID=994&cat=18
-  ./lighttest "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Worlds/HELMS.ZEN"
-  ./lighttest "Helms Hammer.ZEN"
-*/
-
-// lighttest - minimalny poligon testowy do light.frag z OpenGothic
-//
-// DWA TRYBY:
-//   ./lighttest                  - tryb demo: jeden preset (1-6), pokoj z kostek
-//   ./lighttest sciezka/do.ZEN   - tryb swiata: wczytuje WSZYSTKIE dynamiczne
-//                                  zCVobLight z podanego pliku .ZEN (przez
-//                                  ZenKit), na ich prawdziwych pozycjach/Range/
-//                                  kolorach, renderowane addytywnie na plaskiej
-//                                  podlodze dopasowanej do ich bounding-boxa.
-//                                  Swiatla statyczne (baked w oryginale) sa
-//                                  pomijane - i tak nie przechodza przez light.frag.
-//
-// Fragment shader to dosl. kopia logiki z naszych patchy do OpenGothic
-// light.frag - zeby moc na zywo porownywac wersje "linia" (1/d, replika
-// oryginalu) i "obecna" na tej samej
-// scenie, w tej samej skali jednostek co Gothic (cm).
-//
-// Sterowanie:
-//   WASD          - ruch
-//   Space / LCtrl - gora / dol
-//   mysz          - patrzenie
-//   1-6           - wybor presetu swiatla (tylko tryb demo, patrz PRESETS ponizej)
-//   M             - przelacz formule (linia / obecna)
-//   T             - wlacz/wylacz tonemapping ACES (per-kanal, jak w OpenGothic)
-//   [ / ]         - LightIntensity -/+
-//   ESC           - wyjscie
-//   F             - wlacz/wylacz mgle
-//   O / P         - gestosc mgly -/+
-//
-// Aktualna odleglosc kamera->najblizsze swiatlo, formula, i wszystkie
-// parametry sa wypisywane na biezaco w tytule okna.
-
 #include <epoxy/gl.h>
 #include <GLFW/glfw3.h>
 
@@ -56,15 +13,17 @@
 #include <zenkit/vobs/VirtualObject.hh>
 
 #include <cstdio>
-#include <cstdint>
+
 #include <cmath>
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <limits>
 #include <random>
 
-#include "stb_easy_font.h"
+#include "info_render.hpp"
+#include "camera.hpp"
+#include "light_correction.hpp"
+#include "shader_utils.hpp"
 
 // ---------------------------------------------------------------------
 // Wczytywanie prawdziwych swiatel z pliku .ZEN (ZenKit) - te same wartosci
@@ -150,6 +109,8 @@ static const Preset PRESETS[] = {
   {"AURA_650",   650.f,  {0.00f, 0.00f, 0.55f}}, // 0,0,139
   {"AURA_3000", 3000.f, {0.32f, 0.66f, 0.84f}}, // 81,168,214
   };
+
+
 static int g_presetIdx = 1; // start na FIRE - to ten najbardziej sporny
 
 // ---------------------------------------------------------------------
@@ -329,30 +290,7 @@ static const char* FRAG_SRC = R"GLSL(
     }
 )GLSL";
 
-// ---------------------------------------------------------------------
-// Prosty shader 2D (ortho, przestrzen ekranu w pikselach) do tekstu HUD
-// rysowanego przez stb_easy_font - format wierzcholka: pos(vec3)+color(rgba8)
-// ---------------------------------------------------------------------
-static const char* TEXT_VERT_SRC = R"GLSL(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec4 aColor;
 
-uniform mat4 uOrtho;
-out vec4 vColor;
-
-void main() {
-  vColor = aColor;
-  gl_Position = uOrtho * vec4(aPos, 1.0);
-  }
-)GLSL";
-
-static const char* TEXT_FRAG_SRC = R"GLSL(
-#version 330 core
-in vec4 vColor;
-out vec4 FragColor;
-void main() { FragColor = vColor; }
-)GLSL";
 
 // ---------------------------------------------------------------------
 // Pomoce do budowy geometrii (podloga, kostka)
@@ -638,118 +576,7 @@ static std::vector<Vertex> buildFogPoints(glm::vec3 bmin, glm::vec3 bmax, int co
   return v;
 }
 
-static GLuint compileShader(GLenum type, const char* src)
-{
-  GLuint sh = glCreateShader(type);
-  glShaderSource(sh, 1, &src, nullptr);
-  glCompileShader(sh);
-  GLint ok = 0;
-  glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
-  if(!ok) {
-    char log[4096];
-    glGetShaderInfoLog(sh, sizeof(log), nullptr, log);
-    fprintf(stderr, "Blad kompilacji shadera:\n%s\n", log);
-    }
-  return sh;
-}
 
-static GLuint linkProgram(GLuint vs, GLuint fs)
-{
-  GLuint prog = glCreateProgram();
-  glAttachShader(prog, vs);
-  glAttachShader(prog, fs);
-  glLinkProgram(prog);
-  GLint ok = 0;
-  glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-  if(!ok) {
-    char log[4096];
-    glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
-    fprintf(stderr, "Blad linkowania programu:\n%s\n", log);
-    }
-  return prog;
-}
-
-// ---------------------------------------------------------------------
-// Tekst na ekranie (HUD) - stb_easy_font generuje geometrie liter jako
-// kwady (pos xyz + kolor rgba8, interleaved, 16B/wierzcholek). OpenGL 3.3
-// core nie ma GL_QUADS, wiec trojkatujemy przez wspolny bufor indeksow
-// (kazdy kwad i: wierzcholki 4i..4i+3 -> trojkaty (0,1,2)(0,2,3)).
-// ---------------------------------------------------------------------
-struct TextRenderer {
-  GLuint prog = 0, vao = 0, vbo = 0, ebo = 0;
-  std::vector<char> cpuBuf;
-  int    maxQuads = 0;
-
-  void init(int maxQuadsIn = 8192) {
-    maxQuads = maxQuadsIn;
-    cpuBuf.resize(size_t(maxQuads)*4*16); // 4 wierzcholki/kwad * 16B/wierzcholek
-
-    GLuint vs = compileShader(GL_VERTEX_SHADER, TEXT_VERT_SRC);
-    GLuint fs = compileShader(GL_FRAGMENT_SHADER, TEXT_FRAG_SRC);
-    prog = linkProgram(vs, fs);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
-    std::vector<uint32_t> indices(size_t(maxQuads)*6);
-    for(int q = 0; q < maxQuads; ++q) {
-      uint32_t base = uint32_t(q)*4;
-      indices[q*6+0] = base+0; indices[q*6+1] = base+1; indices[q*6+2] = base+2;
-      indices[q*6+3] = base+0; indices[q*6+4] = base+2; indices[q*6+5] = base+3;
-      }
-
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(cpuBuf.size()), nullptr, GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(indices.size()*sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 16, (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 16, (void*)12);
-    glEnableVertexAttribArray(1);
-    glBindVertexArray(0);
-    }
-
-  // rysuje jedna linie tekstu, (x,y) w pikselach od lewego-gornego rogu
-  void drawLine(float x, float y, const std::string& text,
-                unsigned char r, unsigned char g, unsigned char b, unsigned char a,
-                const glm::mat4& ortho) {
-    unsigned char color[4] = {r,g,b,a};
-    int numQuads = stb_easy_font_print(x, y, const_cast<char*>(text.c_str()), color,
-                                        cpuBuf.data(), int(cpuBuf.size()));
-    if(numQuads<=0) return;
-    if(numQuads>maxQuads) numQuads = maxQuads; // bezpiecznik, gdyby tekst byl za dlugi
-
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, GLsizeiptr(numQuads)*4*16, cpuBuf.data());
-
-    glUseProgram(prog);
-    glUniformMatrix4fv(glGetUniformLocation(prog,"uOrtho"), 1, GL_FALSE, glm::value_ptr(ortho));
-    glDrawElements(GL_TRIANGLES, numQuads*6, GL_UNSIGNED_INT, (void*)0);
-    }
-  };
-
-// ---------------------------------------------------------------------
-// Kamera
-// ---------------------------------------------------------------------
-struct Camera {
-  glm::vec3 pos   = {0.f, 100.f, 500.f};
-  float     yaw   = -90.f;
-  float     pitch = 0.f;
-  float     speed = 300.f;
-
-  glm::vec3 front() const {
-    return glm::normalize(glm::vec3(
-      cos(glm::radians(yaw))*cos(glm::radians(pitch)),
-      sin(glm::radians(pitch)),
-      sin(glm::radians(yaw))*cos(glm::radians(pitch))));
-    }
-  glm::vec3 right() const { return glm::normalize(glm::cross(front(), {0,1,0})); }
-  glm::mat4 view() const { return glm::lookAt(pos, pos+front(), glm::vec3(0,1,0)); }
-  };
 
 static Camera g_cam;
 static bool   g_keys[512] = {};
@@ -761,7 +588,7 @@ static int   g_formulaMode    = 1; // 0=linia, 1=obecna
 static int   g_lightcorrection = 0; // 0=brak, 1=obecna
 static int   g_tonemap        = 1; // wlaczony domyslnie - tak jak w OpenGothic
 static float g_lightIntensity = 1.f;
-static bool  g_fogEnabled    = true;
+static bool  g_fogEnabled    = false;
 static float g_fogDensity    = 1.0f;
 static float g_fogPointSize  = 4.f;
 
@@ -815,51 +642,6 @@ static int fogPointCountForRange(float range)
   float volume = side * side * side;
   int count = int(volume * g_fogTargetDensity);
   return std::clamp(count, 200, 2000000); // bezpiecznik gorny/dolny
-}
-
-
-struct RangeMapPoint {
-    float original;
-    float corrected;
-};
-
-static const RangeMapPoint RANGE_MAP[] = {
-    { 200.f,  241.f },
-    { 300.f,  343.f },
-    { 650.f,  666.f },
-    { 700.f,  704.f },
-    {2000.f, 600.f },
-    {3000.f, 1000.f }
-};
-
-
-static float correctedRange(float range)
-{
-    constexpr size_t count =
-        sizeof(RANGE_MAP) / sizeof(RANGE_MAP[0]);
-
-    if(range <= RANGE_MAP[0].original)
-        return RANGE_MAP[0].corrected;
-
-    if(range >= RANGE_MAP[count - 1].original)
-        return RANGE_MAP[count - 1].corrected;
-
-    for(size_t i = 1; i < count; ++i)
-    {
-        if(range <= RANGE_MAP[i].original)
-        {
-            const auto& a = RANGE_MAP[i - 1];
-            const auto& b = RANGE_MAP[i];
-
-            float t = (range - a.original) /
-                      (b.original - a.original);
-
-            return a.corrected +
-                   t * (b.corrected - a.corrected);
-        }
-    }
-
-    return range;
 }
 
 
@@ -1147,37 +929,7 @@ int main(int argc, char** argv) {
     
 
 
-    // ---- HUD tekstowy w oknie (nie tylko w tytule) ----
-    glm::mat4 textOrtho = glm::ortho(0.f, float(fbw), float(fbh), 0.f, -1.f, 1.f);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_BLEND);
-
-    char line[256];
-    float ty = 10.f;
-    const float lh = 14.f; // odstep miedzy liniami
-
-    snprintf(line, sizeof(line), "kamera: x=%.1f  y=%.1f  z=%.1f", g_cam.pos.x, g_cam.pos.y, g_cam.pos.z);
-    text.drawLine(10.f, ty, line, 255,255,255,255, textOrtho); ty += lh;
-
-    snprintf(line, sizeof(line), "yaw=%.1f  pitch=%.1f", g_cam.yaw, g_cam.pitch);
-    text.drawLine(10.f, ty, line, 200,200,200,255, textOrtho); ty += lh;
-
-    snprintf(line, sizeof(line), "najblizsze swiatlo: %s  Range=%.0f ", hudPreset, hudRange);
-    text.drawLine(10.f, ty, line, 255,220,150,255, textOrtho); ty += lh;
-
-    snprintf(line, sizeof(line), "d=%.1f  (d/Range=%.1f%%)", hudDist, 100.f*hudDist/hudRange);
-    text.drawLine(10.f, ty, line, 255,220,150,255, textOrtho); ty += lh;
-
-    snprintf(line, sizeof(line), "formula=%s korekcja=%s tonemap=%s  LightIntensity=%.3f",
-             g_formulaMode==0 ? "LINIA" : "OBECNA", g_lightcorrection==0 ? "BRAK" : "OBECNA", g_tonemap ? "ON" : "OFF", g_lightIntensity);
-    text.drawLine(10.f, ty, line, 150,220,255,255, textOrtho); ty += lh;
-
-    snprintf(line, sizeof(line), "mgla=%s  gestosc=%.2f  [F] toggle [O/P] gestosc",
-         g_fogEnabled ? "ON" : "OFF", g_fogDensity);
-    text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
-
-
-    glEnable(GL_DEPTH_TEST);
+    drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode, g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity);
 
     glfwSwapBuffers(win);
 

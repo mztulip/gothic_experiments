@@ -1,0 +1,38 @@
+/*
+  https://www.worldofgothic.de/?go=moddb&action=view&fileID=994&cat=18
+  ./lighttest "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Worlds/HELMS.ZEN"
+  ./lighttest /home/mz/.wine/drive_c/Program\ Files\ \(x86\)/JoWood/Gothic\ II/_Work/Data/Worlds/OLDWORLD/OLDWORLD.ZEN
+  ./lighttest "Helms Hammer.ZEN"
+*/
+
+// lighttest - minimalny poligon testowy do light.frag z OpenGothic
+//
+// DWA TRYBY:
+//   ./lighttest                  - tryb demo: jeden preset (1-6), pokoj z kostek
+//   ./lighttest sciezka/do.ZEN   - tryb swiata: wczytuje WSZYSTKIE dynamiczne
+//                                  zCVobLight z podanego pliku .ZEN (przez
+//                                  ZenKit), na ich prawdziwych pozycjach/Range/
+//                                  kolorach, renderowane addytywnie na plaskiej
+//                                  podlodze dopasowanej do ich bounding-boxa.
+//                                  Swiatla statyczne (baked w oryginale) sa
+//                                  pomijane - i tak nie przechodza przez light.frag.
+//
+// Fragment shader to dosl. kopia logiki z naszych patchy do OpenGothic
+// light.frag - zeby moc na zywo porownywac wersje "linia" (1/d, replika
+// oryginalu) i "obecna" na tej samej
+// scenie, w tej samej skali jednostek co Gothic (cm).
+//
+// Sterowanie:
+//   WASD          - ruch
+//   Space / LCtrl - gora / dol
+//   mysz          - patrzenie
+//   1-6           - wybor presetu swiatla (tylko tryb demo, patrz PRESETS ponizej)
+//   M             - przelacz formule (linia / obecna)
+//   T             - wlacz/wylacz tonemapping ACES (per-kanal, jak w OpenGothic)
+//   [ / ]         - LightIntensity -/+
+//   ESC           - wyjscie
+//   F             - wlacz/wylacz mgle
+//   O / P         - gestosc mgly -/+
+//
+// Aktualna odleglosc kamera->najblizsze swiatlo, formula, i wszystkie
+// parametry sa wypisywane na biezaco w tytule okna.
