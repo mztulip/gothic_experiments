@@ -121,11 +121,11 @@ static bool worldToScreen(const glm::vec3& worldPos,
 }
 
 static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, const char* hudPreset, float hudRange, float hudDist,
-    int g_formulaMode, int g_lightcorrection, int g_tonemap, int g_lightIntensity, bool g_fogEnabled, float g_fogDensity,
+    int g_formulaMode, int g_lightcorrection, int g_tonemap, float g_lightIntensity, bool g_fogEnabled, float g_fogDensity,
     std::vector<LoadedLight>& worldLights,
     glm::mat4& view,
     glm::mat4& proj,
-    float fps
+    float fps, bool g_texturesEnabled
     )
 {
     // ---- HUD tekstowy w oknie (nie tylko w tytule) ----
@@ -133,7 +133,7 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
-    char line[256];
+    char line[400];
     float ty = 10.f;
     const float lh = 14.f; // odstep miedzy liniami
 
@@ -153,12 +153,17 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     snprintf(line, sizeof(line), "d=%.1f  (d/Range=%.1f%%)", hudDist, 100.f*hudDist/hudRange);
     text.drawLine(10.f, ty, line, 255,220,150,255, textOrtho); ty += lh;
 
-    snprintf(line, sizeof(line), "formula=%s korekcja=%s tonemap=%s  LightIntensity=%.3f",
-             g_formulaMode==0 ? "LINIA" : "OBECNA", g_lightcorrection==0 ? "BRAK" : "OBECNA", g_tonemap ? "ON" : "OFF", g_lightIntensity);
+    snprintf(line, sizeof(line), "formula=%s korekcja=%s tonemap=%s  LightIntensity=%.3f tekstury: %s",
+             g_formulaMode==0 ? "LINIA" : "SQUARE", g_lightcorrection==0 ? "BRAK" : "OBECNA", 
+             g_tonemap ? "ON" : "OFF", 
+             g_lightIntensity,
+            g_texturesEnabled ? "ON" : "OFF");
     text.drawLine(10.f, ty, line, 150,220,255,255, textOrtho); ty += lh;
 
-    snprintf(line, sizeof(line), "mgla=%s  gestosc=%.2f  [F] toggle [O/P] gestosc [N] korekcja ",
-         g_fogEnabled ? "ON" : "OFF", g_fogDensity);
+    snprintf(line, sizeof(line),
+         "mgla=%s  gestosc=%.2f  [F] mgla  [O/P] gestosc  [N] korekcja  [M] formula  [T] tonemap  [Y] tekstury",
+         g_fogEnabled ? "ON" : "OFF",
+         g_fogDensity);
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
 
     // ---- etykiety "range: X" nad kazdym swiatlem - tylko w promieniu 1000 od kamery ----

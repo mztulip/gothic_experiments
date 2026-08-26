@@ -4,6 +4,25 @@
 #include <string>
 
 // ---------------------------------------------------------------------
+// Presety swiatla - zmierzone/przyjete wartosci z HELMS.ZEN (patrz rozmowa)
+// ---------------------------------------------------------------------
+struct Preset {
+  const char* name;
+  float       range;
+  glm::vec3   color;      // baza koloru (0..1)
+  };
+
+static const Preset PRESETS[] = {
+  {"FIRESMALL",  200.f, {1.00f, 0.29f, 0.00f}}, // 255,73,0
+  {"FIRE",       300.f, {1.00f, 0.00f, 0.00f}}, // klatka 255,0,0 (najbardziej "problematyczna")
+  {"JUSTWHITE",  700.f,  {1.00f, 1.00f, 0.68f}}, // 255,255,173
+  {"WHITEBLEND",2000.f,  {1.00f, 1.00f, 0.58f}}, // 255,255,148
+  {"AURA_650",   650.f,  {0.00f, 0.00f, 0.55f}}, // 0,0,139
+  {"AURA_3000", 3000.f, {0.32f, 0.66f, 0.84f}}, // 81,168,214
+  };
+
+
+// ---------------------------------------------------------------------
 // Wczytywanie prawdziwych swiatel z pliku .ZEN (ZenKit) - te same wartosci
 // Range/kolor/preset co w grze, 
 // ---------------------------------------------------------------------
@@ -24,6 +43,25 @@ static bool lightScissorRect(const glm::vec3& pos, float range,
                               int fbw, int fbh,
                               int& x0, int& y0, int& x1, int& y1)
 {
+  // Sprawdzenie w przestrzeni widoku (przed projekcja) - odpornie na
+  // przypadek gdy bounding-box swiatla jest blisko/przecina plaszczyzne
+  // przechodzaca przez kamere (prostopadla do kierunku patrzenia).
+  // Kamera patrzy w kierunku -Z (konwencja OpenGL) - punkty przed kamera
+  // maja viewZ < 0.
+  glm::vec4 viewCenter = view * glm::vec4(pos, 1.0f);
+  float viewZ = viewCenter.z;
+
+  // Jesli srodek swiatla nie jest wystarczajaco daleko PRZED kamera
+  // (z zapasem rownym range, zeby cala kula na pewno miescila sie
+  // przed plaszczyzna kamery) - rzutowanie rogow byloby zawodne.
+  // Bezpieczny fallback: caly ekran.
+  const float safetyMargin = 1.05f; // 5% zapasu na bezpieczenstwo numeryczne
+  if(viewZ > -range * safetyMargin)
+  {
+    x0 = 0; y0 = 0; x1 = fbw; y1 = fbh;
+    return true;
+  }
+
   glm::vec3 corners[8];
   int idx = 0;
   for(int dx=-1; dx<=1; dx+=2)
@@ -36,15 +74,13 @@ static bool lightScissorRect(const glm::vec3& pos, float range,
   for(auto& c : corners)
   {
     glm::vec4 clip = proj * view * glm::vec4(c, 1.f);
-    if(clip.w <= 0.01f)
-    {
-      // rog za kamera - bezpieczny fallback: caly ekran dla tego swiatla
-      x0=0; y0=0; x1=fbw; y1=fbh;
-      return true;
-    }
+    // dzieki wczesniejszemu sprawdzeniu viewZ, w tym miejscu clip.w
+    // powinno byc bezpiecznie dodatnie i "duze" dla wszystkich rogow
     glm::vec3 ndc = glm::vec3(clip) / clip.w;
+
     float sx = (ndc.x*0.5f+0.5f) * fbw;
-    float sy = (1.f-(ndc.y*0.5f+0.5f)) * fbh;
+    float sy = (ndc.y*0.5f+0.5f) * fbh; // <-- BEZ odwrocenia Y (glScissor: origin dolny-lewy)
+
     minX = std::min(minX, sx); maxX = std::max(maxX, sx);
     minY = std::min(minY, sy); maxY = std::max(maxY, sy);
   }

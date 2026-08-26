@@ -14,7 +14,7 @@ static const RangeMapPoint RANGE_MAP[] = {
   {   80.f,  100.f },  // NW_STANDART_DARKBLUE
   {  100.f,  100.f },  // FIRESMALL, AURA
   {  150.f,  100.f },  // DEFAULTLIGHT_DARKBLUE
-  {  200.f,  190.f },  // CITY
+  {  200.f,  200.f },  // CITY
   {  250.f,  200.f },  // NW_STANDART_DARKBLUE, NW_STANDART_FIRE_DYNAMIC
   {  300.f,  200.f },  // NW_STANDART_CRAWLER, AMBIENCE_300, DEMONTOWER_SMALL_LIGHT
   {  350.f,  200.f },  // AMBIENCE_ENTRANCE_500, DARK

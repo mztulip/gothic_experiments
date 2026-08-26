@@ -19,6 +19,7 @@
 #include <string>
 #include <algorithm>
 #include <random>
+#include <chrono>
 
 #include "info_render.hpp"
 #include "camera.hpp"
@@ -26,81 +27,9 @@
 #include "shader_utils.hpp"
 #include "light.hpp"
 #include "gbuffer.hpp"
-
-static inline glm::vec3 zenPosToGL(float x, float y, float z)
-{
-  // ZenGin (Gothic) uzywa ukladu lewoskretnego, OpenGL prawoskretnego.
-  // Negujemy DOKLADNIE JEDNA os, aby zamienic chiralnosc - tutaj X.
-  // Jesli po tescie okaze sie, ze to zla os, zmien negacje na Y lub Z
-  // (ale zawsze tylko jedna naraz - negacja dwoch osi to obrot, nie odbicie).
-  return glm::vec3(-x, y, z);
-}
-
-static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
-                               std::vector<LoadedLight>& out, int& skippedStatic)
-{
-  if(vob->type==zenkit::VirtualObjectType::zCVobLight)
-  {
-    const auto& l = static_cast<const zenkit::VLight&>(*vob);
-    if(l.is_static)
-    {
-      ++skippedStatic;
-    }
-    else
-    {
-      LoadedLight ll;
-      ll.pos     = zenPosToGL(l.position.x, l.position.y, l.position.z);
-      ll.range   = l.range;
-      ll.color   = {l.color.r/255.f, l.color.g/255.f, l.color.b/255.f};
-      ll.preset  = l.preset;
-      out.push_back(ll);
-    }
-  }
-  for(auto& c : vob->children)
-    walkVobsForLights(c, out, skippedStatic);
-}
-
-static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) {
-  std::vector<LoadedLight> out;
-  int skippedStatic = 0;
-  try {
-    auto reader = zenkit::Read::from(path);
-    zenkit::World world;
-    world.load(reader.get());
-    for(auto& vob : world.world_vobs)
-      walkVobsForLights(vob, out, skippedStatic);
-    }
-  catch(const std::exception& e) {
-    fprintf(stderr, "Nie udalo sie wczytac %s: %s\n", path.c_str(), e.what());
-    return {};
-    }
-  printf("Wczytano %zu dynamicznych swiatel z %s (pominieto %d statycznych - sa baked w vertex colors)\n",
-         out.size(), path.c_str(), skippedStatic);
-  for(auto& l : out)
-    printf("  preset=%-16s range=%6.1f pos=(%.1f, %.1f, %.1f)\n",
-           l.preset.empty() ? "(brak nazwy)" : l.preset.c_str(),
-           l.range, l.pos.x, l.pos.y, l.pos.z);
-  return out;
-  }
-
-// ---------------------------------------------------------------------
-// Presety swiatla - zmierzone/przyjete wartosci z HELMS.ZEN (patrz rozmowa)
-// ---------------------------------------------------------------------
-struct Preset {
-  const char* name;
-  float       range;
-  glm::vec3   color;      // baza koloru (0..1)
-  };
-
-static const Preset PRESETS[] = {
-  {"FIRESMALL",  200.f, {1.00f, 0.29f, 0.00f}}, // 255,73,0
-  {"FIRE",       300.f, {1.00f, 0.00f, 0.00f}}, // klatka 255,0,0 (najbardziej "problematyczna")
-  {"JUSTWHITE",  700.f,  {1.00f, 1.00f, 0.68f}}, // 255,255,173
-  {"WHITEBLEND",2000.f,  {1.00f, 1.00f, 0.58f}}, // 255,255,148
-  {"AURA_650",   650.f,  {0.00f, 0.00f, 0.55f}}, // 0,0,139
-  {"AURA_3000", 3000.f, {0.32f, 0.66f, 0.84f}}, // 81,168,214
-  };
-
+#include "zen_loader.hpp"
+#include "shaders.hpp"
+#include "texture_loader.hpp"
 
 static int g_presetIdx = 1; // start na FIRE - to ten najbardziej sporny
 
@@ -121,353 +50,27 @@ static GLuint makeFullscreenQuad() {
   return vao;
 }
 
-// ---------------------------------------------------------------------
-// Wspolna logika oswietlenia - uzywana zarowno przez stary forward-shader
-// (markery/mgla) jak i nowy deferred light-pass. Bez "#version" - jest
-// doklejana programowo po nim, patrz buildFragSource() nizej.
-// ---------------------------------------------------------------------
-static const char* LIGHTING_COMMON_SRC = R"GLSL(
-vec3 srgbDecode(vec3 c) { return pow(c, vec3(2.2)); }
-
-vec3 acesTonemapInv(vec3 x) {
-  float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-  return (-0.59 * x + 0.03 - sqrt(-1.0127 * x*x + 1.3702 * x + 0.0009)) / (2.0 * (2.43*x - 2.51));
-}
-
-vec3 textureAlbedo(vec3 rgb) {
-  vec3 linear = srgbDecode(rgb);
-  return acesTonemapInv(linear*0.78+0.001) * 5.0;
-}
-
-vec3 ACESFilm(vec3 x) {
-  float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
-}
-
-// jedno miejsce prawdy dla formuly atenuacji - parametry przekazywane
-// jawnie (nie przez globalne uniformy), zeby ta funkcja byla niezalezna
-// od kolejnosci deklaracji uniformow w konkretnym shaderze
-float attenFor(vec3 ldir, float dist, float range, int formulaMode, float lightIntensity) {
-  if(formulaMode==0) {
-    const float ATT1 = 0.009;
-    return (dist>range) ? 0.0 : 1.0/max(ATT1*dist, 0.02);
-  } else {
-    float factor = dot(ldir,ldir) / (range*range);
-    if(factor > 1.0) return 0.0;
-    float sf = max(1.0 - factor*factor, 0.0);
-    return (1.0/max(factor,0.005)) * (sf*sf) * lightIntensity;
-  }
-}
-)GLSL";
-
-static const char* GEOM_VERT_SRC = R"GLSL(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProj;
-
-out vec3 vWorldPos;
-out vec3 vNormal;
-
-void main() {
-  vec4 world = uModel * vec4(aPos, 1.0);
-  vWorldPos = world.xyz;
-  vNormal   = mat3(uModel) * aNormal;
-  gl_Position = uProj * uView * world;
-}
-)GLSL";
-
-static const char* GEOM_FRAG_SRC = R"GLSL(
-#version 330 core
-in vec3 vWorldPos;
-in vec3 vNormal;
-
-layout(location = 0) out vec4 outAlbedo;
-layout(location = 1) out vec4 outNormal;
-layout(location = 2) out vec4 outWorldPos;
-
-uniform vec3 uAlbedo;
-
-void main() {
-  outAlbedo   = vec4(uAlbedo, 1.0);
-  outNormal   = vec4(normalize(vNormal), 0.0);
-  outWorldPos = vec4(vWorldPos, 1.0);
-}
-)GLSL";
-
-
-static const char* LIGHT_VERT_SRC = R"GLSL(
-#version 330 core
-layout(location = 0) in vec2 aPos;
-out vec2 vUV;
-void main() {
-  vUV = aPos * 0.5 + 0.5;
-  gl_Position = vec4(aPos, 0.0, 1.0);
-}
-)GLSL";
-
-static const char* LIGHT_FRAG_SRC = R"GLSL(
-in vec2 vUV;
-out vec4 FragColor;
-
-uniform sampler2D uGAlbedo;
-uniform sampler2D uGNormal;
-uniform sampler2D uGWorldPos;
-
-uniform vec3  uLightPos;
-uniform vec3  uLightColor;
-uniform float uRange;
-uniform float uLightIntensity;
-uniform int   uFormulaMode;
-uniform int   uAmbientOnly;
-
-void main() {
-  vec3 albedo   = texture(uGAlbedo, vUV).rgb;
-  vec3 normal   = texture(uGNormal, vUV).rgb;
-  vec3 worldPos = texture(uGWorldPos, vUV).rgb;
-
-  if(uAmbientOnly==1) {
-    float skyLight = max(0.0, normal.y) * 0.15;
-    FragColor = vec4(albedo * (0.08 + skyLight), 1.0);
-    return;
-  }
-
-  vec3  ldir = uLightPos - worldPos;
-  float dist = length(ldir);
-  float lambert = max(0.0, dot(normalize(ldir), normal));
-
-  float atten = attenFor(ldir, dist, uRange, uFormulaMode, uLightIntensity);
-
-  vec3 linear = textureAlbedo(albedo);
-  FragColor = vec4(linear * uLightColor * lambert * atten * 0.25, 1.0);
-}
-)GLSL";
-
-// ---------------------------------------------------------------------
-// Shadery - GLSL wklejony jako string, logika fragmentow 1:1 z light.frag
-// ---------------------------------------------------------------------
-static const char* VERT_SRC = R"GLSL(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProj;
-uniform bool  uIsFog;
-uniform float uPointSizeBase;
-
-out vec3 vWorldPos;
-out vec3 vNormal;
-
-void main() {
-  vec4 world = uModel * vec4(aPos, 1.0);
-  vWorldPos = world.xyz;
-  vNormal   = mat3(uModel) * aNormal;
-  vec4 viewPos = uView * world;
-  gl_Position = uProj * viewPos;
-
-  if(uIsFog) {
-    float dist = length(viewPos.xyz);
-    gl_PointSize = clamp(uPointSizeBase * (300.0/max(dist,1.0)), 2.0, 48.0);
-  //gl_PointSize = 3.0; 
-
-    // Kamera patrzy w kierunku -Z (konwencja OpenGL/view space).
-    // Punkty zbyt blisko lub za kamera (viewPos.z blisko/powyzej 0) daja
-    // zdegenerowane wspolrzedne po projekcji/dzieleniu przez w - GL_POINTS
-    // nie sa clipowane na near-plane tak jak trojkaty, wiec taki punkt
-    // potrafi wyrenderowac sie jako ogromny sprite na cala scene.
-    // Wypychamy go recznie poza clip-space, zeby GPU go odrzucil.
-    if(viewPos.z > -10.0) {
-      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-      }
-    }
-  }
-)GLSL";
-
-static const char* FRAG_SRC = R"GLSL(
-in vec3 vWorldPos;
-in vec3 vNormal;
-out vec4 FragColor;
-
-uniform vec3  uAlbedo;
-uniform vec3  uLightPos;
-uniform vec3  uLightColor;
-uniform float uRange;
-uniform float uLightIntensity;
-uniform int   uFormulaMode;
-uniform int   uTonemap;
-uniform bool  uIsMarker;
-uniform int   uAmbientOnly;
-uniform bool  uIsFog;
-uniform float uFogDensity;
-
-void main()
-{
-    if(uIsMarker)
-    {
-        FragColor = vec4(uLightColor, 1.0);
-        return;
-    }
-
-    float fogAlpha = 1.0;
-    if(uIsFog)
-    {
-        vec2 c = gl_PointCoord*2.0 - 1.0;
-        float r2 = dot(c,c);
-        if(r2 > 1.0) discard;
-        fogAlpha = 1.0 - r2;
-    }
-
-    vec3 hdrColor;
-
-    if(uAmbientOnly==1)
-    {
-        float skyLight = max(0.0, normalize(vNormal).y) * 0.15;
-        hdrColor = uAlbedo * (0.08 + skyLight);
-    }
-    else
-    {
-        vec3  normal = normalize(vNormal);
-        vec3  ldir   = uLightPos - vWorldPos;
-        float dist   = length(ldir);
-        float lambert = uIsFog ? 1.0 : max(0.0, dot(normalize(ldir), normal));
-
-        float atten = attenFor(ldir, dist, uRange, uFormulaMode, uLightIntensity);
-
-        vec3 linear = textureAlbedo(uAlbedo);
-        hdrColor = linear * uLightColor * lambert * atten * 0.25;
-
-        if(uIsFog) hdrColor *= uFogDensity * fogAlpha;
-    }
-
-    vec3 outColor;
-    if(uTonemap==1)
-        outColor = ACESFilm(hdrColor);
-    else
-        outColor = clamp(hdrColor, 0.0, 1.0);
-
-    FragColor = vec4(outColor, 1.0);
-}
-)GLSL";
-
-// Skleja "#version" + wspolna logike oswietlenia + cialo konkretnego
-// fragment shadera - GLSL nie ma #include, wiec robimy to programowo w C++.
-static std::string buildFragSource(const char* body)
-{
-  return std::string("#version 330 core\n") + LIGHTING_COMMON_SRC + body;
-}
-
-// ---------------------------------------------------------------------
-// Pomoce do budowy geometrii (podloga, kostka)
-// ---------------------------------------------------------------------
-struct Vertex { glm::vec3 pos; glm::vec3 normal; };
-
-// Wczytuje statyczna siatke poziomu (BEZ tekstur/materialow - tylko geometria
-// + normalne) z pliku .ZEN, do wyswietlania jednym, stalym uAlbedo (tak samo
-// jak nasza plaska podloga). polygons.vertex_indices jest juz otrojkatowane
-// przez ZenKit - trzy kolejne wartosci = jeden trojkat. Normalne bierzemy
-// wprost z danych (VertexFeature::normal), nie liczymy ich sami.
-static std::vector<Vertex> loadWorldMeshFromZen(const std::string& path)
-{
-  std::vector<Vertex> out;
-  try
-  {
-    auto reader = zenkit::Read::from(path);
-    zenkit::World world;
-    world.load(reader.get());
-
-    const zenkit::Mesh& mesh = world.world_mesh;
-    const auto& vidx = mesh.polygons.vertex_indices;
-    const auto& fidx = mesh.polygons.feature_indices;
-
-    if(vidx.size()!=fidx.size() || vidx.size()%3!=0)
-    {
-      fprintf(stderr, "Nieoczekiwany uklad danych siatki (vidx=%zu fidx=%zu) - pomijam siatke.\n",
-              vidx.size(), fidx.size());
-      return {};
-    }
-
-    out.reserve(vidx.size());
-
-    auto pushVertex = [&](size_t idx)
-    {
-      const auto& p = mesh.vertices[vidx[idx]];
-      const auto& n = mesh.features[fidx[idx]].normal;
-      glm::vec3 pos = zenPosToGL(p.x, p.y, p.z);
-      glm::vec3 nrm = zenPosToGL(n.x, n.y, n.z);   // ta sama negacja dla normalnych - to poprawne dla odbicia diagonalnego
-      out.push_back({pos, nrm});
-    };
-
-    for(size_t i = 0; i + 2 < vidx.size(); i += 3)
-    {
-      // Zamiana kolejnosci 2. i 3. wierzcholka kompensuje odwrocenie
-      // "skretnosci" trojkata spowodowane negacja jednej osi.
-      pushVertex(i+0);
-      pushVertex(i+2);
-      pushVertex(i+1);
-    }
-  }
-  catch(const std::exception& e)
-  {
-    fprintf(stderr, "Nie udalo sie wczytac siatki z %s: %s\n", path.c_str(), e.what());
-    return {};
-  }
-
-  printf("Wczytano siatke swiata: %zu trojkatow\n", out.size()/3);
-  return out;
-}
-
-static void walkVobsForStartPoint(const std::shared_ptr<zenkit::VirtualObject>& vob,
-                                   bool& found, glm::vec3& outPos)
-{
-  if(found) return;
-  if(vob->type==zenkit::VirtualObjectType::zCVobStartpoint)
-  {
-    outPos = zenPosToGL(vob->position.x, vob->position.y, vob->position.z);
-    found = true;
-    return;
-  }
-  for(auto& c : vob->children)
-  {
-    walkVobsForStartPoint(c, found, outPos);
-    if(found) return;
-  }
-}
-
-// Szuka pierwszego zCVobStartpoint w pliku .ZEN. Zwraca false, jesli go nie ma
-// (nie kazdy testowy/czesciowy swiat go zawiera).
-static bool findStartPointFromZen(const std::string& path, glm::vec3& outPos) {
-  try {
-    auto reader = zenkit::Read::from(path);
-    zenkit::World world;
-    world.load(reader.get());
-    bool found = false;
-    for(auto& vob : world.world_vobs) {
-      walkVobsForStartPoint(vob, found, outPos);
-      if(found) break;
-      }
-    if(found)
-      printf("Znaleziono zCVobStartpoint: (%.1f, %.1f, %.1f)\n", outPos.x, outPos.y, outPos.z);
-    else
-      printf("Brak zCVobStartpoint w tym pliku - kamera wystartuje przy centroidzie swiatel.\n");
-    return found;
-    }
-  catch(const std::exception& e) {
-    fprintf(stderr, "Nie udalo sie sprawdzic startpointu w %s: %s\n", path.c_str(), e.what());
-    return false;
-    }
-  }
 
 static void addQuad(std::vector<Vertex>& out,
-                     glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d,
-                     glm::vec3 n) {
-  out.push_back({a,n}); out.push_back({b,n}); out.push_back({c,n});
-  out.push_back({a,n}); out.push_back({c,n}); out.push_back({d,n});
-  }
+                    glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d,
+                    glm::vec3 n) 
+{
+    out.push_back({a, n, {0.f, 0.f}}); 
+    out.push_back({b, n, {1.f, 0.f}}); 
+    out.push_back({c, n, {1.f, 1.f}}); 
+    out.push_back({a, n, {0.f, 0.f}}); 
+    out.push_back({c, n, {1.f, 1.f}}); 
+    out.push_back({d, n, {0.f, 1.f}});
+}
+
+static void addTriangle(std::vector<Vertex>& out,
+                        glm::vec3 a, glm::vec3 b, glm::vec3 c,
+                        glm::vec3 normal)
+{
+    out.push_back({a, normal, {0.f, 0.f}});
+    out.push_back({b, normal, {1.f, 0.f}});
+    out.push_back({c, normal, {0.5f, 1.f}});
+}
 
 static void addBox(std::vector<Vertex>& out, glm::vec3 c, glm::vec3 half) {
   glm::vec3 p[8] = {
@@ -484,17 +87,7 @@ static void addBox(std::vector<Vertex>& out, glm::vec3 c, glm::vec3 half) {
   addQuad(out, p[4],p[5],p[1],p[0], { 0,-1, 0}); // dol
   }
 
-static void addTriangle(
-    std::vector<Vertex>& out,
-    glm::vec3 a,
-    glm::vec3 b,
-    glm::vec3 c,
-    glm::vec3 normal)
-{
-    out.push_back({a, normal});
-    out.push_back({b, normal});
-    out.push_back({c, normal});
-}
+
 
 static void addTriangle(
     std::vector<Vertex>& out,
@@ -611,32 +204,34 @@ static std::vector<Vertex> buildRoom()
 }
 
 
-// plaska podloga dopasowana do bounding-boxa realnych swiatel wczytanych z .ZEN
-// (nie mamy prawdziwej geometrii poziomu - to tylko plaszczyzna odniesienia,
-// zeby widziec padanie/gasniecie swiatla w relacji do rzeczywistych pozycji)
-static std::vector<Vertex> buildFloorForLights(const std::vector<LoadedLight>& lights, float& outY)
-{
-  float minX=1e9f, maxX=-1e9f, minZ=1e9f, maxZ=-1e9f, minY=1e9f;
-  for(auto& l : lights) {
-    minX = std::min(minX, l.pos.x); maxX = std::max(maxX, l.pos.x);
-    minZ = std::min(minZ, l.pos.z); maxZ = std::max(maxZ, l.pos.z);
-    minY = std::min(minY, l.pos.y);
-    }
-  float margin = 500.f;
-  minX -= margin; maxX += margin;
-  minZ -= margin; maxZ += margin;
-  outY = minY - 50.f; // podloga tuz pod najnizszym swiatlem
+// // plaska podloga dopasowana do bounding-boxa realnych swiatel wczytanych z .ZEN
+// // (nie mamy prawdziwej geometrii poziomu - to tylko plaszczyzna odniesienia,
+// // zeby widziec padanie/gasniecie swiatla w relacji do rzeczywistych pozycji)
+// static std::vector<Vertex> buildFloorForLights(const std::vector<LoadedLight>& lights, float& outY)
+// {
+//   float minX=1e9f, maxX=-1e9f, minZ=1e9f, maxZ=-1e9f, minY=1e9f;
+//   for(auto& l : lights) {
+//     minX = std::min(minX, l.pos.x); maxX = std::max(maxX, l.pos.x);
+//     minZ = std::min(minZ, l.pos.z); maxZ = std::max(maxZ, l.pos.z);
+//     minY = std::min(minY, l.pos.y);
+//     }
+//   float margin = 500.f;
+//   minX -= margin; maxX += margin;
+//   minZ -= margin; maxZ += margin;
+//   outY = minY - 50.f; // podloga tuz pod najnizszym swiatlem
 
-  std::vector<Vertex> v;
-  addQuad(v, {minX,outY,minZ}, {maxX,outY,minZ}, {maxX,outY,maxZ}, {minX,outY,maxZ}, {0,1,0});
-  return v;
-}
+//   std::vector<Vertex> v;
+//   addQuad(v, {minX,outY,minZ}, {maxX,outY,minZ}, {maxX,outY,maxZ}, {minX,outY,maxZ}, {0,1,0});
+//   return v;
+// }
+
+static std::mt19937 rng(1337);
 
 static std::vector<Vertex> buildFogPoints(glm::vec3 bmin, glm::vec3 bmax, int count)
 {
   std::vector<Vertex> v;
   v.reserve(count);
-  std::mt19937 rng(1337);
+
   std::uniform_real_distribution<float> dx(bmin.x, bmax.x);
   std::uniform_real_distribution<float> dy(bmin.y, bmax.y);
   std::uniform_real_distribution<float> dz(bmin.z, bmax.z);
@@ -660,6 +255,7 @@ static int   g_tonemap        = 1; // wlaczony domyslnie - tak jak w OpenGothic
 static float g_lightIntensity = 1.f;
 static bool  g_fogEnabled    = false;
 static float g_fogDensity    = 1.0f;
+static bool  g_texturesEnabled = true;
 static float g_fogPointSize  = 4.f;
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
@@ -670,6 +266,7 @@ static void keyCallback(GLFWwindow* w, int key, int, int action, int)
   if(action!=GLFW_PRESS) return;
 
   if(key==GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
+  if(key==GLFW_KEY_Y) g_texturesEnabled ^= 1;
   if(key==GLFW_KEY_M) g_formulaMode ^= 1;
   if(key ==GLFW_KEY_N) g_lightcorrection ^= 1;
   if(key==GLFW_KEY_T) g_tonemap ^= 1;
@@ -739,6 +336,11 @@ int main(int argc, char** argv) {
     worldLights.push_back(demo);
   }
 
+  TextureCache texCache;
+  texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/");
+  std::vector<SubMesh> worldSubMeshes;
+
+  glm::vec3 camStart;
 
   if(!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -780,39 +382,69 @@ int main(int argc, char** argv) {
   GLint locRange      = glGetUniformLocation(lightProg, "uRange");
 
 
-GLuint quadVao = makeFullscreenQuad();
+  GLuint quadVao = makeFullscreenQuad();
 
 // gbufor inicjujemy dopiero w petli (znamy tam fbw/fbh), patrz ensureSize() nizej
 
-  auto makeVao = [](const std::vector<Vertex>& verts) {
+auto makeVao = [](const std::vector<Vertex>& verts) {
     GLuint vao, vbo;
+
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
+
     glBindVertexArray(vao);
+
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size()*sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex,pos));
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        verts.size() * sizeof(Vertex),
+        verts.data(),
+        GL_STATIC_DRAW
+    );
+
+    glVertexAttribPointer(
+        0, 3, GL_FLOAT, GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, pos)
+    );
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex,normal));
+
+    glVertexAttribPointer(
+        1, 3, GL_FLOAT, GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, normal)
+    );
     glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(
+        2, 2, GL_FLOAT, GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, uv)
+    );
+    glEnableVertexAttribArray(2);
+
     glBindVertexArray(0);
+
     return vao;
-    };
+};
 
-  GLuint floorVao;
-  size_t floorVertCount;
-  glm::vec3 camStart;
 
+  auto t0 = std::chrono::high_resolution_clock::now();
+  auto t1 = std::chrono::high_resolution_clock::now();
+  auto t2 = std::chrono::high_resolution_clock::now();
+  auto t3 = std::chrono::high_resolution_clock::now();
   if(worldMode) //to jest false jeśli nie na świateł w pliku zen
   {
-    std::vector<Vertex> floorVerts = loadWorldMeshFromZen(argv[1]);
-    if(floorVerts.empty()) {
-      // fallback: brak/pusta siatka - plaska podloga dopasowana do swiatel
-      float floorY = 0.f;
-      floorVerts = buildFloorForLights(worldLights, floorY);
-      }
-    floorVao = makeVao(floorVerts);
-    floorVertCount = floorVerts.size();
+    worldSubMeshes = loadWorldSubMeshesFromZen(argv[1], texCache);
+
+    t1 = std::chrono::high_resolution_clock::now();
+    printf("[LOG] Wczytanie ZEN z dysku: %.2f ms\n",
+           std::chrono::duration<float, std::milli>(t1 - t0).count());
+
+    printf("[LOG] Utworzono %zu podsiatek świata\n",
+           worldSubMeshes.size());
+
+    t2 = std::chrono::high_resolution_clock::now();
 
     glm::vec3 centroid(0.f);
     for(auto& l : worldLights) centroid += l.pos;
@@ -834,9 +466,15 @@ GLuint quadVao = makeFullscreenQuad();
   }
   else //brak świateł w pliku ZEN lub nawet pliku dodajmey nasz sztuczny prosty świat
   {
+    //  Tworzenie sztucznego pokoju w trybie demo w identycznej strukturze SubMesh
     std::vector<Vertex> roomVerts = buildRoom();
-    floorVao = makeVao(roomVerts);
-    floorVertCount = roomVerts.size();
+    SubMesh demoMesh;
+    demoMesh.vertexCount = roomVerts.size();
+    demoMesh.fallbackColor = glm::vec3(0.6f, 0.6f, 0.62f);
+    demoMesh.texture.valid = false; // Brak tekstury - shader użyje fallbackColor
+
+    demoMesh.vao = makeVao(roomVerts);
+    worldSubMeshes.push_back(demoMesh);
   }
 
   std::vector<Vertex> markerVerts;
@@ -850,16 +488,27 @@ GLuint quadVao = makeFullscreenQuad();
   std::vector<const LoadedLight*> visibleLights;
   visibleLights.reserve(worldLights.size());
 
-
-  for(auto& l : worldLights)
+  printf("[LOG] Generowanie punktów mgły dla %zu świateł...\n", worldLights.size());
+  for(size_t i = 0; i < worldLights.size(); ++i)
   {
+    auto& l = worldLights[i];
     glm::vec3 bmin = l.pos - glm::vec3(2*l.range);
     glm::vec3 bmax = l.pos + glm::vec3(2*l.range);
     int count = fogPointCountForRange(l.range);
     auto pts = buildFogPoints(bmin, bmax, count);
     fogVaoPerLight.push_back(makeVao(pts));
     fogCountPerLight.push_back(pts.size());
+
+    // Pasek postępu / log co 20 świateł
+    if (i % 20 == 0 || i == worldLights.size() - 1) {
+        printf("  -> Postęp mgły: %zu/%zu świateł (%.0f%%)\n", 
+               i + 1, worldLights.size(), (float)(i + 1) / worldLights.size() * 100.f);
+    }
   }
+
+  t3 = std::chrono::high_resolution_clock::now();
+  printf("[LOG] Czas generowania mgły: %.2f ms\n", 
+        std::chrono::duration<float, std::milli>(t3 - t2).count());
   glEnable(GL_PROGRAM_POINT_SIZE);
 
   TextRenderer text;
@@ -940,9 +589,33 @@ GLuint quadVao = makeFullscreenQuad();
     glUniformMatrix4fv(glGetUniformLocation(geomProg,"uView"), 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(glGetUniformLocation(geomProg,"uProj"), 1, GL_FALSE, glm::value_ptr(proj));
     glUniformMatrix4fv(glGetUniformLocation(geomProg,"uModel"), 1, GL_FALSE, glm::value_ptr(glm::mat4(1.f)));
-    glUniform3f(glGetUniformLocation(geomProg,"uAlbedo"), 0.6f, 0.6f, 0.62f);
-    glBindVertexArray(floorVao);
-    glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount)); // <-- TYLKO RAZ na klatke
+    
+    GLint locHasTex = glGetUniformLocation(geomProg, "uHasTexture");
+    GLint locAlbedo = glGetUniformLocation(geomProg, "uAlbedo");
+    glUniform1i(glGetUniformLocation(geomProg, "uTexture"), 0);
+
+    // glBindVertexArray(floorVao);
+    // glDrawArrays(GL_TRIANGLES, 0, GLsizei(floorVertCount)); // <-- TYLKO RAZ na klatke
+
+    for (const auto& sm : worldSubMeshes)
+    {
+        const bool useTexture = g_texturesEnabled && sm.texture.valid;
+        if (useTexture)
+        {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, sm.texture.id);
+            glUniform1i(locHasTex, 1);
+        }
+        else
+        {
+            glUniform1i(locHasTex, 0);
+            glUniform3fv(locAlbedo, 1, glm::value_ptr(sm.fallbackColor));
+        }
+
+        glBindVertexArray(sm.vao);
+        glDrawArrays(GL_TRIANGLES, 0, GLsizei(sm.vertexCount));
+    }
+    glBindVertexArray(0);
 
     // skopiuj glebie do domyslnego framebuffera, zeby markery/mgla mialy poprawny depth test
     glBindFramebuffer(GL_READ_FRAMEBUFFER, g_gbuf.fbo);
@@ -976,7 +649,7 @@ GLuint quadVao = makeFullscreenQuad();
     for(auto& l : worldLights)
     {
       float distToCam = glm::length(l.pos - g_cam.pos);
-      if(distToCam > l.range * 20.0f) continue; // zbyt daleko - i tak wygasa do 0
+      if(distToCam > l.range * 50.0f) continue; // zbyt daleko - i tak wygasa do 0
       visibleLights.push_back(&l);
     }
 
@@ -1016,9 +689,7 @@ GLuint quadVao = makeFullscreenQuad();
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
 
-
     // //rYSUJEMY SWIATŁA
-
     if(!worldMode)
     {
       const Preset& pr = PRESETS[g_presetIdx];
@@ -1042,7 +713,6 @@ GLuint quadVao = makeFullscreenQuad();
       }
 
     }
-
 
     for(size_t i = 0; i < worldLights.size(); ++i) 
     {
@@ -1076,12 +746,8 @@ GLuint quadVao = makeFullscreenQuad();
         }
 #endif
       }
-
-
       glUniform1i(glGetUniformLocation(prog,"uIsFog"), 0); // reset przed markerami
     }
-
-
 
     // znaczniki swiatel - opaque, z powrotem normalny depth test/write
     glDisable(GL_BLEND);
@@ -1107,13 +773,11 @@ GLuint quadVao = makeFullscreenQuad();
         hudPreset = l.preset.empty() ? "(brak nazwy)" : l.preset.c_str();
         }
       }
-    
-
 
     drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode,
        g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity,
        worldLights,
-       view, proj, g_fpsSmoothed
+       view, proj, g_fpsSmoothed, g_texturesEnabled
       );
 
     glfwSwapBuffers(win);

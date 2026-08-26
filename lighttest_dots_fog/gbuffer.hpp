@@ -54,8 +54,18 @@ struct GBuffer {
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rbDepth);
 
-    if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-      fprintf(stderr, "GBuffer FBO niekompletny!\n");
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        fprintf(stderr,
+                "GBuffer FBO niekompletny! status = 0x%X\n",
+                status);
+    }
+    else
+    {
+        printf("GBuffer FBO OK: %dx%d\n", w, h);
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
   }
