@@ -66,28 +66,47 @@ public:
     }
 
     // Indeksuje cały katalog tekstur RAZ na starcie (szybkie wyszukiwanie)
-    void indexDirectory(const std::string& gothicDir)
+   void indexDirectory(const std::string& gothicDir)
+{
+    fs::path customTexDir =
+        fs::path("mydata") / "_Work" / "Data" / "Textures";
+
+    fs::path gothicTexDir =
+        fs::path(gothicDir) / "_Work" / "Data" / "Textures";
+
+    // Fallback - jeżeli podany gothicDir jest już katalogiem Textures
+    if (!fs::exists(gothicTexDir))
     {
-        fs::path gothicTexDir =
-            fs::path(gothicDir) / "_Work" / "Data" / "Textures";
+        gothicTexDir = fs::path(gothicDir);
+    }
 
-        if (!fs::exists(gothicTexDir)) {
-            gothicTexDir = fs::path(gothicDir);
-        }
+    fileIndex.clear();
 
-        if (!fs::exists(gothicTexDir)) {
-            std::cerr
-                << "[TEXTURE ERROR] Ścieżka tekstur nie istnieje: "
-                << gothicTexDir << std::endl;
-            return;
-        }
-
-        fileIndex.clear();
-
-        try
+    try
+    {
+        // =========================================================
+        // FUNKCJA POMOCNICZA
+        // =========================================================
+        auto indexTextureDirectory =
+            [&](const fs::path& textureDir, bool overwrite)
         {
+            if (!fs::exists(textureDir))
+            {
+                std::cout
+                    << "[TEXTURE] Katalog nie istnieje: "
+                    << textureDir
+                    << std::endl;
+
+                return;
+            }
+
+            std::cout
+                << "[TEXTURE] Indeksowanie: "
+                << textureDir
+                << std::endl;
+
             for (const auto& entry :
-                fs::recursive_directory_iterator(gothicTexDir))
+                fs::recursive_directory_iterator(textureDir))
             {
                 if (!entry.is_regular_file())
                     continue;
@@ -103,15 +122,30 @@ public:
                         absolutePath.filename().string()
                     );
 
-                fileIndex[filename] = absolutePath.string();
+                if (overwrite)
+                {
+                    fileIndex[filename] = absolutePath.string();
+                }
+                else
+                {
+                    fileIndex.emplace(
+                        filename,
+                        absolutePath.string()
+                    );
+                }
 
                 // -------------------------------------------------
-                // 2. Ścieżka względna względem katalogu Textures
+                // 2. Ścieżka względna
                 // np. world/castle/wall.tga
                 // -------------------------------------------------
                 std::error_code ec;
+
                 fs::path relativePath =
-                    fs::relative(absolutePath, gothicTexDir, ec);
+                    fs::relative(
+                        absolutePath,
+                        textureDir,
+                        ec
+                    );
 
                 if (!ec)
                 {
@@ -120,26 +154,51 @@ public:
                             relativePath.generic_string()
                         );
 
-                    fileIndex[relativeName] = absolutePath.string();
+                    if (overwrite)
+                    {
+                        fileIndex[relativeName] =
+                            absolutePath.string();
+                    }
+                    else
+                    {
+                        fileIndex.emplace(
+                            relativeName,
+                            absolutePath.string()
+                        );
+                    }
                 }
             }
+        };
 
-            indexed = true;
 
-            std::cout
-                << "[TEXTURE LOG] Zindeksowano "
-                << fileIndex.size()
-                << " nazw/ścieżek tekstur."
-                << std::endl;
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr
-                << "[TEXTURE ERROR] Błąd indeksowania: "
-                << e.what()
-                << std::endl;
-        }
+        // =========================================================
+        // 1. CUSTOM - MA PIERWSZEŃSTWO
+        // =========================================================
+        indexTextureDirectory(customTexDir, true);
+
+
+        // =========================================================
+        // 2. GOTHIC - TYLKO JEŻELI NIE MA CUSTOM
+        // =========================================================
+        indexTextureDirectory(gothicTexDir, false);
+
+
+        indexed = true;
+
+        std::cout
+            << "[TEXTURE LOG] Zindeksowano "
+            << fileIndex.size()
+            << " nazw/ścieżek tekstur."
+            << std::endl;
     }
+    catch (const std::exception& e)
+    {
+        std::cerr
+            << "[TEXTURE ERROR] Błąd indeksowania: "
+            << e.what()
+            << std::endl;
+    }
+}
 
     std::string resolvePath(const std::string& requestedFilename)
     {
