@@ -120,6 +120,74 @@ static bool worldToScreen(const glm::vec3& worldPos,
   return true;
 }
 
+static void drawWorldLabel(
+    TextRenderer& text,
+    const std::string& label,
+    const glm::vec3& worldPos,
+    const glm::mat4& view,
+    const glm::mat4& proj,
+    int fbw,
+    int fbh,
+    const glm::mat4& textOrtho,
+    unsigned char r = 255,
+    unsigned char g = 255,
+    unsigned char b = 255,
+    unsigned char a = 255)
+{
+    glm::vec2 screenPos;
+
+    if(!worldToScreen(
+        worldPos,
+        view,
+        proj,
+        fbw,
+        fbh,
+        screenPos))
+    {
+        return;
+    }
+
+    // Przybliżona szerokość znaku stb_easy_font
+    float width = float(label.length()) * 6.f;
+
+    text.drawLine(
+        screenPos.x - width * 0.5f,
+        screenPos.y,
+        label,
+        r, g, b, a,
+        textOrtho
+    );
+}
+
+static bool isVobInView(
+    const glm::vec3& vobPos,
+    const Camera& cam,
+    float maxDistance = 1500.f,
+    float minDot = 0.90f)
+{
+    glm::vec3 toVob = vobPos - cam.pos;
+
+    float distance = glm::length(toVob);
+
+    // Za daleko
+    if(distance > maxDistance)
+        return false;
+
+    // Za blisko
+    if(distance < 1.f)
+        return false;
+
+    toVob /= distance;
+
+    glm::vec3 camDir = glm::normalize(cam.front());
+
+    float dot = glm::dot(camDir, toVob);
+
+    // 0.90 ~= około 26 stopni od środka ekranu
+    return dot >= minDot;
+}
+
+
 static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, const char* hudPreset, float hudRange, float hudDist,
     int g_formulaMode, int g_lightcorrection, int g_tonemap, float g_lightIntensity, bool g_fogEnabled, float g_fogDensity,
     std::vector<LoadedLight>& worldLights,
@@ -167,7 +235,7 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;
 
     // ---- etykiety "range: X" nad kazdym swiatlem - tylko w promieniu 1000 od kamery ----
-    const float labelMaxDist = 1000.f;
+    const float labelMaxDist = 200.f;
 
     for(auto& l : worldLights)
     {

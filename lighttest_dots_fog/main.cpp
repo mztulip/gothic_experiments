@@ -883,7 +883,8 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     const char* hudPreset = "demo";
 
     float nearestDist = 1e9f;
-    for(auto& l : worldLights) {
+    for(auto& l : worldLights) 
+    {
       glUniform3fv(glGetUniformLocation(prog,"uLightColor"), 1, glm::value_ptr(l.color));
       glm::mat4 markerModel = glm::translate(glm::mat4(1.f), l.pos);
       glUniformMatrix4fv(glGetUniformLocation(prog,"uModel"), 1, GL_FALSE, glm::value_ptr(markerModel));
@@ -895,7 +896,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         hudDist = d; hudRange = l.range;
         hudPreset = l.preset.empty() ? "(brak nazwy)" : l.preset.c_str();
         }
-      }
+    }
 
     glUniform1i(
     glGetUniformLocation(prog, "uIsMarker"),
@@ -932,8 +933,51 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
             GLsizei(objectMarkerVerts.size())
         );
     }
+
+    //Wyswietlanie napisu  z typem VOBa
+    glm::mat4 textOrtho =
+    glm::ortho(
+        0.f,
+        float(fbw),
+        float(fbh),
+        0.f,
+        -1.f,
+        1.f
+    );
+
+    for(const auto& obj : worldVobs)
+    {
+        // Pokazuj napis tylko dla VOB-a,
+        // na który aktualnie patrzymy.
+        if(!isVobInView(
+            obj.pos,
+            g_cam,
+            200.f,
+            0.90f))
+        {
+            continue;
+        }
+
+        std::string label = vobTypeName(obj.type);
+
+        drawWorldLabel(
+            text,
+            label,
+            obj.pos + glm::vec3(0.f, 10.f, 0.f),
+            view,
+            proj,
+            fbw,
+            fbh,
+            textOrtho,
+            255, 255, 255, 255
+        );
+    }
+
+
     //////////////////////////////////////////////
     ///Wyswietlanie napisów HUD
+    ////////////////////////////////////////////
+
 
     drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode,
        g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity,
