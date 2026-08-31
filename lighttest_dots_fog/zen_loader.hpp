@@ -112,6 +112,45 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
     return out;
 }
 
+static glm::vec3 vobTypeColor(zenkit::VirtualObjectType type)
+{
+    switch (type)
+    {
+        case zenkit::VirtualObjectType::zCVob:
+            return {1.0f, 1.0f, 0.0f}; // żółty
+
+        case zenkit::VirtualObjectType::zCVobLevelCompo:
+            return {1.0f, 0.6f, 0.0f}; // pomarańczowy
+
+        case zenkit::VirtualObjectType::oCItem:
+            return {0.0f, 1.0f, 0.0f}; // zielony
+
+        case zenkit::VirtualObjectType::oCNpc:
+            return {0.2f, 0.5f, 1.0f}; // niebieski
+
+        case zenkit::VirtualObjectType::oCMOB:
+            return {1.0f, 0.2f, 1.0f}; // różowy
+
+        case zenkit::VirtualObjectType::oCMobInter:
+            return {0.8f, 0.2f, 1.0f}; // fioletowy
+
+        case zenkit::VirtualObjectType::oCMobContainer:
+            return {0.0f, 1.0f, 1.0f}; // cyan
+
+        case zenkit::VirtualObjectType::oCMobDoor:
+            return {1.0f, 0.2f, 0.2f}; // czerwony
+
+        case zenkit::VirtualObjectType::zCVobStartpoint:
+            return {1.0f, 1.0f, 1.0f}; // biały
+
+        case zenkit::VirtualObjectType::zCVobLight:
+            return {1.0f, 0.8f, 0.1f}; // światło - złoty
+
+        default:
+            return {0.7f, 0.7f, 0.7f}; // szary
+    }
+}
+
 
 
 static void walkVobsForStartPoint(const std::shared_ptr<zenkit::VirtualObject>& vob,

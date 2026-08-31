@@ -521,7 +521,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   addBox(
       objectMarkerVerts,
       {0, 0, 0},
-      {10, 10, 10}
+      {5, 5, 5}
   );
 
   GLuint objectMarkerVao = makeVao(objectMarkerVerts);
@@ -917,10 +917,13 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
             glm::value_ptr(markerModel)
         );
 
-        // np. żółty marker dla wszystkich VOB-ów
-        glUniform3f(
+        // różne kolory dla różnych vobów
+        glm::vec3 color = vobTypeColor(obj.type);
+
+        glUniform3fv(
             glGetUniformLocation(prog, "uLightColor"),
-            1.f, 1.f, 0.f
+            1,
+            glm::value_ptr(color)
         );
 
         glDrawArrays(
