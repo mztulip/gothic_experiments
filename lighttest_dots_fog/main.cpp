@@ -971,7 +971,23 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
             textOrtho,
             255, 255, 255, 255
         );
+
+        if(!obj.visualName.empty())
+        {
+            drawWorldLabel(
+                text,
+                obj.visualName,
+                obj.pos + glm::vec3(0.f, 24.f, 0.f),
+                view,
+                proj,
+                fbw,
+                fbh,
+                textOrtho,
+                180, 220, 255, 255
+            );
+        }
     }
+
 
 
     //////////////////////////////////////////////
