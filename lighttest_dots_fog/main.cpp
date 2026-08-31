@@ -203,28 +203,6 @@ static std::vector<Vertex> buildRoom()
     return v;
 }
 
-
-// // plaska podloga dopasowana do bounding-boxa realnych swiatel wczytanych z .ZEN
-// // (nie mamy prawdziwej geometrii poziomu - to tylko plaszczyzna odniesienia,
-// // zeby widziec padanie/gasniecie swiatla w relacji do rzeczywistych pozycji)
-// static std::vector<Vertex> buildFloorForLights(const std::vector<LoadedLight>& lights, float& outY)
-// {
-//   float minX=1e9f, maxX=-1e9f, minZ=1e9f, maxZ=-1e9f, minY=1e9f;
-//   for(auto& l : lights) {
-//     minX = std::min(minX, l.pos.x); maxX = std::max(maxX, l.pos.x);
-//     minZ = std::min(minZ, l.pos.z); maxZ = std::max(maxZ, l.pos.z);
-//     minY = std::min(minY, l.pos.y);
-//     }
-//   float margin = 500.f;
-//   minX -= margin; maxX += margin;
-//   minZ -= margin; maxZ += margin;
-//   outY = minY - 50.f; // podloga tuz pod najnizszym swiatlem
-
-//   std::vector<Vertex> v;
-//   addQuad(v, {minX,outY,minZ}, {maxX,outY,minZ}, {maxX,outY,maxZ}, {minX,outY,maxZ}, {0,1,0});
-//   return v;
-// }
-
 static std::mt19937 rng(1337);
 
 static std::vector<Vertex> buildFogPoints(glm::vec3 bmin, glm::vec3 bmax, int count)
@@ -301,12 +279,6 @@ static void cursorCallback(GLFWwindow*, double x, double y) {
   g_cam.pitch  = std::clamp(g_cam.pitch, -89.f, 89.f);
   }
 
-static void deleteVao(GLuint& vao) 
-{
-  if(vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
-  // uwaga: to nie usuwa powiazanego VBO - jesli chcesz w pelni posprzatac,
-  // makeVao powinno zwracac pare {vao, vbo} zamiast samego vao.
-}
 
 static const float g_fogTargetDensity =  0.0002f; // punktow na jednostke objetosci 
 
@@ -377,6 +349,13 @@ int main(int argc, char** argv)
     worldMode = !worldLights.empty();
     if(argc>1 && !worldMode)
       fprintf(stderr, "Brak swiatel dynamicznych w %s - przechodze do trybu demo.\n", argv[1]);
+  }
+
+  std::vector<LoadedVob> worldVobs;
+
+  if (worldMode)
+  {
+      worldVobs = loadVobsFromZen(zenPath);
   }
 
   if(!worldMode)
@@ -534,8 +513,19 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   }
 
   std::vector<Vertex> markerVerts;
-  addBox(markerVerts, {0,0,0}, {15,15,15});
+  //Boxy dla źródeł światła
+  addBox(markerVerts, {0,0,0}, {10,10,10});
   GLuint markerVao = makeVao(markerVerts);
+
+  std::vector<Vertex> objectMarkerVerts;
+  addBox(
+      objectMarkerVerts,
+      {0, 0, 0},
+      {10, 10, 10}
+  );
+
+  GLuint objectMarkerVao = makeVao(objectMarkerVerts);
+
 
   std::vector<size_t> visibleLightIndices;
   visibleLightIndices.reserve(worldLights.size());
@@ -880,7 +870,9 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
     glUniform1i(glGetUniformLocation(prog, "uIsFog"), 0);
 
-    // znaczniki swiatel - opaque, z powrotem normalny depth test/write
+    ///////////////////////////////////////////////////
+    // znaczniki swiatel 
+    ////////////////////////////////////////
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
@@ -904,6 +896,41 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         hudPreset = l.preset.empty() ? "(brak nazwy)" : l.preset.c_str();
         }
       }
+
+    glUniform1i(
+    glGetUniformLocation(prog, "uIsMarker"),
+    1);
+    glBindVertexArray(objectMarkerVao);
+
+    for (const auto& obj : worldVobs)
+    {
+        glm::mat4 markerModel =
+            glm::translate(
+                glm::mat4(1.f),
+                obj.pos
+            );
+
+        glUniformMatrix4fv(
+            glGetUniformLocation(prog, "uModel"),
+            1,
+            GL_FALSE,
+            glm::value_ptr(markerModel)
+        );
+
+        // np. żółty marker dla wszystkich VOB-ów
+        glUniform3f(
+            glGetUniformLocation(prog, "uLightColor"),
+            1.f, 1.f, 0.f
+        );
+
+        glDrawArrays(
+            GL_TRIANGLES,
+            0,
+            GLsizei(objectMarkerVerts.size())
+        );
+    }
+    //////////////////////////////////////////////
+    ///Wyswietlanie napisów HUD
 
     drawHud(text, fbw, fbh, g_cam, hudPreset, hudRange, hudDist, g_formulaMode,
        g_lightcorrection, g_tonemap, g_lightIntensity, g_fogEnabled, g_fogDensity,

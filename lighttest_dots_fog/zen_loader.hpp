@@ -29,6 +29,90 @@ struct Vertex {
     glm::vec2 uv; //współrzędne tekstury
 };
 
+struct LoadedVob
+{
+    glm::vec3 pos;
+    glm::vec3 bboxMin;
+    glm::vec3 bboxMax;
+    zenkit::VirtualObjectType type;
+    std::string visualName;
+    bool showVisual = false;
+};
+
+static void walkVobsForBoxes(
+    const std::shared_ptr<zenkit::VirtualObject>& vob,
+    std::vector<LoadedVob>& out)
+{
+    if (vob->type != zenkit::VirtualObjectType::zCVobLight)
+    {
+        LoadedVob obj;
+
+        obj.pos = zenPosToGL(
+            vob->position.x,
+            vob->position.y,
+            vob->position.z
+        );
+
+        obj.bboxMin = zenPosToGL(
+            vob->bbox.min.x,
+            vob->bbox.min.y,
+            vob->bbox.min.z
+        );
+
+        obj.bboxMax = zenPosToGL(
+            vob->bbox.max.x,
+            vob->bbox.max.y,
+            vob->bbox.max.z
+        );
+
+        obj.type = vob->type;
+        obj.showVisual = vob->show_visual;
+
+        if (vob->visual)
+            obj.visualName = vob->visual->name;
+
+        out.push_back(obj);
+    }
+
+    for (auto& c : vob->children)
+        walkVobsForBoxes(c, out);
+}
+
+static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
+{
+    std::vector<LoadedVob> out;
+
+    try
+    {
+        auto reader = zenkit::Read::from(path);
+
+        zenkit::World world;
+        world.load(reader.get());
+
+        for (auto& vob : world.world_vobs)
+            walkVobsForBoxes(vob, out);
+    }
+    catch (const std::exception& e)
+    {
+        fprintf(
+            stderr,
+            "Nie udalo sie wczytac VOB-ow z %s: %s\n",
+            path.c_str(),
+            e.what()
+        );
+
+        return {};
+    }
+
+    printf(
+        "Wczytano %zu obiektow VOB do debugowania\n",
+        out.size()
+    );
+
+    return out;
+}
+
+
 
 static void walkVobsForStartPoint(const std::shared_ptr<zenkit::VirtualObject>& vob,
                                    bool& found, glm::vec3& outPos)
@@ -250,7 +334,8 @@ static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
     walkVobsForLights(c, out, skippedStatic);
 }
 
-static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) {
+static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) 
+{
   std::vector<LoadedLight> out;
   int skippedStatic = 0;
   try {
@@ -271,7 +356,7 @@ static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) {
            l.preset.empty() ? "(brak nazwy)" : l.preset.c_str(),
            l.range, l.pos.x, l.pos.y, l.pos.z, l.isStatic ? "static" : "dynamic");
   return out;
-  }
+}
 
   struct SubMesh {
     GLuint vao = 0;
