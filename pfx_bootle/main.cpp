@@ -68,7 +68,7 @@ static bool   g_rotatingView = false;
 static double g_lastMouseX = 0.0, g_lastMouseY = 0.0;
 static bool   g_firstMouse = true;
 
-static void mouseButtonCallback(GLFWwindow* window, int button, int action, int /*mods*/) {
+static void mouseButtonCallback(GLFWwindow* /*window*/, int button, int action, int /*mods*/) {
     if (button == GLFW_MOUSE_BUTTON_RIGHT) {
         g_rotatingView = (action == GLFW_PRESS);
         if (g_rotatingView) g_firstMouse = true;
@@ -303,8 +303,8 @@ void main() {
     float star = max(max(armVert, armHorz), core * 0.9);
     if (star < 0.03) discard;
 
-    // rdzen niemal bialy, ramiona w kolorze czastki (blekit/zloto z definicji PFX)
-    vec3 col = mix(vColor, vec3(1.0), core * 0.85);
+    // rdzen lekko rozjasniony, ale nadal wyraznie niebieski (nie biala plama)
+    vec3 col = mix(vColor, vec3(1.0), core * 0.35);
 
     FragColor = vec4(col * star, star * vAlpha);
 }
@@ -641,13 +641,13 @@ static ParticleFxDef makePfxMagicAuraBottle() {
     fx.lspPartVar = 0.20f;
 
     // Wyglad: mala, niebieska "gwiazdka/krzyzyk"
-    fx.visSizeStart     = glm::vec2(0.10f);
+    fx.visSizeStart     = glm::vec2(0.033f); // ~3x mniejsze niz poprzednio (0.10)
     fx.visSizeEndScale  = 1.0f; // nieuzywane przy visIsOneShotFlash = true
     fx.visAlphaFunc     = AlphaFunc::ADD;
     fx.visAlphaStart    = 255.0f; // szczyt jasnosci blysku
     fx.visAlphaEnd      = 0.0f;
-    fx.visTexColorStart = glm::vec3(140, 190, 255); // blekit
-    fx.visTexColorEnd   = glm::vec3(220, 235, 255); // niemal bialy w szczycie
+    fx.visTexColorStart = glm::vec3(60, 130, 255);  // wyrazny blekit
+    fx.visTexColorEnd   = glm::vec3(150, 200, 255); // jasniejszy blekit w szczycie (bez bieli)
     fx.visIsOneShotFlash = true; // pojawia sie -> rozblyskuje -> gasnie, w miejscu
 
     return fx;
