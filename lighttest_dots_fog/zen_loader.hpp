@@ -72,26 +72,28 @@ static bool findStartPointFromZen(const std::string& path, glm::vec3& outPos) {
   }
 
 static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
-                               std::vector<LoadedLight>& out, int& skippedStatic)
+                              std::vector<LoadedLight>& out, int& skippedStatic)
 {
-  if(vob->type==zenkit::VirtualObjectType::zCVobLight)
+  if (vob->type == zenkit::VirtualObjectType::zCVobLight)
   {
     const auto& l = static_cast<const zenkit::VLight&>(*vob);
-    if(l.is_static)
+
+    LoadedLight ll;
+    ll.pos      = zenPosToGL(l.position.x, l.position.y, l.position.z);
+    ll.range    = l.range;
+    ll.color    = {l.color.r / 255.f, l.color.g / 255.f, l.color.b / 255.f};
+    ll.preset   = l.preset;
+    ll.isStatic = l.is_static; // Przypisanie informacji o statyczności
+
+    if (l.is_static)
     {
-      ++skippedStatic;
+      ++skippedStatic; // Jeśli nadal chcesz liczyć statyczne źródła (np. do celów statystyk)
     }
-    else
-    {
-      LoadedLight ll;
-      ll.pos     = zenPosToGL(l.position.x, l.position.y, l.position.z);
-      ll.range   = l.range;
-      ll.color   = {l.color.r/255.f, l.color.g/255.f, l.color.b/255.f};
-      ll.preset  = l.preset;
-      out.push_back(ll);
-    }
+
+    out.push_back(ll);
   }
-  for(auto& c : vob->children)
+
+  for (auto& c : vob->children)
     walkVobsForLights(c, out, skippedStatic);
 }
 
@@ -112,9 +114,9 @@ static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) {
   printf("Wczytano %zu dynamicznych swiatel z %s (pominieto %d statycznych - sa baked w vertex colors)\n",
          out.size(), path.c_str(), skippedStatic);
   for(auto& l : out)
-    printf("  preset=%-16s range=%6.1f pos=(%.1f, %.1f, %.1f)\n",
+    printf("  preset=%-16s range=%6.1f pos=(%.1f, %.1f, %.1f) typ=%s\n",
            l.preset.empty() ? "(brak nazwy)" : l.preset.c_str(),
-           l.range, l.pos.x, l.pos.y, l.pos.z);
+           l.range, l.pos.x, l.pos.y, l.pos.z, l.isStatic ? "static" : "dynamic");
   return out;
   }
 

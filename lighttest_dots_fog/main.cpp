@@ -250,7 +250,7 @@ static bool   g_firstMouse = true;
 static bool   g_mouseCaptured = true;
 
 static int   g_formulaMode    = 1; // 0=linia, 1=obecna
-static int   g_lightcorrection = 0; // 0=brak, 1=obecna
+static int   g_lightcorrection = 1; // 0=brak, 1=obecna
 static int   g_tonemap        = 1; // wlaczony domyslnie - tak jak w OpenGothic
 static float g_lightIntensity = 1.f;
 static bool  g_fogEnabled    = false;
@@ -488,23 +488,23 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   std::vector<const LoadedLight*> visibleLights;
   visibleLights.reserve(worldLights.size());
 
-  printf("[LOG] Generowanie punktów mgły dla %zu świateł...\n", worldLights.size());
-  for(size_t i = 0; i < worldLights.size(); ++i)
-  {
-    auto& l = worldLights[i];
-    glm::vec3 bmin = l.pos - glm::vec3(2*l.range);
-    glm::vec3 bmax = l.pos + glm::vec3(2*l.range);
-    int count = fogPointCountForRange(l.range);
-    auto pts = buildFogPoints(bmin, bmax, count);
-    fogVaoPerLight.push_back(makeVao(pts));
-    fogCountPerLight.push_back(pts.size());
+  // printf("[LOG] Generowanie punktów mgły dla %zu świateł...\n", worldLights.size());
+  // for(size_t i = 0; i < worldLights.size(); ++i)
+  // {
+  //   auto& l = worldLights[i];
+  //   glm::vec3 bmin = l.pos - glm::vec3(2*l.range);
+  //   glm::vec3 bmax = l.pos + glm::vec3(2*l.range);
+  //   int count = fogPointCountForRange(l.range);
+  //   auto pts = buildFogPoints(bmin, bmax, count);
+  //   fogVaoPerLight.push_back(makeVao(pts));
+  //   fogCountPerLight.push_back(pts.size());
 
-    // Pasek postępu / log co 20 świateł
-    if (i % 20 == 0 || i == worldLights.size() - 1) {
-        printf("  -> Postęp mgły: %zu/%zu świateł (%.0f%%)\n", 
-               i + 1, worldLights.size(), (float)(i + 1) / worldLights.size() * 100.f);
-    }
-  }
+  //   // Pasek postępu / log co 20 świateł
+  //   if (i % 20 == 0 || i == worldLights.size() - 1) {
+  //       printf("  -> Postęp mgły: %zu/%zu świateł (%.0f%%)\n", 
+  //              i + 1, worldLights.size(), (float)(i + 1) / worldLights.size() * 100.f);
+  //   }
+  // }
 
   t3 = std::chrono::high_resolution_clock::now();
   printf("[LOG] Czas generowania mgły: %.2f ms\n", 

@@ -31,8 +31,8 @@ struct LoadedLight {
   float       range;
   glm::vec3   color;
   std::string preset;
-  };
-
+  bool        isStatic = false;
+};
 
 // Rzutuje bounding-box swiatla (pos +- range) na ekran, zwraca prostokat
 // scissor. Jesli jakikolwiek rog bboxa jest za kamera, bezpiecznie

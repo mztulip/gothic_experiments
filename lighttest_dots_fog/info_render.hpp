@@ -196,6 +196,7 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
 
         char rangeLine[64];
         char colorLine[64];
+        char typeLine[64];
 
         snprintf(rangeLine, sizeof(rangeLine),
                 "range: %.0f", l.range);
@@ -203,9 +204,12 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
         snprintf(colorLine, sizeof(colorLine),
                 "color: (%d,%d,%d)", r, g, b);
 
+        snprintf(typeLine,  sizeof(typeLine),  "type: %s", l.isStatic ? "static" : "dynamic");
+
         // Center the text horizontally
         float rangeWidth = float(strlen(rangeLine)) * 6.f;
         float colorWidth = float(strlen(colorLine)) * 6.f;
+        float typeWidth  = float(strlen(typeLine))  * 6.f;
 
         text.drawLine(
             screenPos.x - rangeWidth * 0.5f,
@@ -223,6 +227,14 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
             255,
             textOrtho
         );
+
+        text.drawLine(
+          screenPos.x - typeWidth * 0.5f,
+          screenPos.y + 24.f,
+          typeLine,
+          255, 255, 255, 255,
+          textOrtho
+      );
     }
 
 
