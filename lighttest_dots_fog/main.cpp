@@ -30,6 +30,7 @@
 #include "zen_loader.hpp"
 #include "shaders.hpp"
 #include "texture_loader.hpp"
+#include "fog_buffer.hpp"
 
 static int g_presetIdx = 1; // start na FIRE - to ten najbardziej sporny
 
@@ -297,32 +298,6 @@ static float effectiveLightRange(const LoadedLight& l)
         : correctedRange(l.range);
 }
 
-struct FogBuffer
-{
-    GLuint vao = 0;
-    GLuint vbo = 0;
-    size_t count = 0;
-    float range = 0.f;
-    bool generated = false;
-};
-
-static void deleteFogBuffer(FogBuffer& fog)
-{
-    if(fog.vbo)
-    {
-        glDeleteBuffers(1, &fog.vbo);
-        fog.vbo = 0;
-    }
-
-    if(fog.vao)
-    {
-        glDeleteVertexArrays(1, &fog.vao);
-        fog.vao = 0;
-    }
-
-    fog.count = 0;
-    fog.generated = false;
-}
 
 
 int main(int argc, char** argv)
