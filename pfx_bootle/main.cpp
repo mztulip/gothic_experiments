@@ -640,8 +640,10 @@ static ParticleFxDef makePfxMagicAuraBottle() {
     fx.lspPartAvg = 0.65f;
     fx.lspPartVar = 0.20f;
 
-    // Wyglad: mala, niebieska "gwiazdka/krzyzyk"
-    fx.visSizeStart     = glm::vec2(0.033f); // ~3x mniejsze niz poprzednio (0.10)
+    // Wyglad: mala, niebieska "gwiazdka/krzyzyk" - wyraznie mniejsza niz
+    // szyjka butelki (promien szyjki w profilu ~0.09 jedn. swiata, patrz
+    // createBottleMesh -> profile[6..8])
+    fx.visSizeStart     = glm::vec2(0.012f); // dalsze zmniejszenie wzgledem 0.033
     fx.visSizeEndScale  = 1.0f; // nieuzywane przy visIsOneShotFlash = true
     fx.visAlphaFunc     = AlphaFunc::ADD;
     fx.visAlphaStart    = 255.0f; // szczyt jasnosci blysku
@@ -767,7 +769,7 @@ public:
             m_buffer.push_back(pt.pos.y);
             m_buffer.push_back(pt.pos.z);
             m_buffer.push_back(alpha);
-            m_buffer.push_back(size * 110.0f); // przeskalowanie do rozmiaru w pikselach point sprite'a
+            m_buffer.push_back(size * 80.0f); // przeskalowanie do rozmiaru w pikselach point sprite'a
             m_buffer.push_back(color.r);
             m_buffer.push_back(color.g);
             m_buffer.push_back(color.b);
