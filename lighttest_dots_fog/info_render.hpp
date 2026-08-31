@@ -72,7 +72,7 @@ static void drawHud(TextRenderer& text, float fbw, float fbh, Camera g_cam, cons
     text.drawLine(10.f, ty, line, 150,220,255,255, textOrtho); ty += lh;
 
     snprintf(line, sizeof(line),
-         "mgla=%s  gestosc=%.2f  [F] mgla  [O/P] gestosc  [N] korekcja  [M] formula  [T] tonemap  [Y] tekstury",
+         "mgla=%s  gestosc=%.2f  [F] mgla  [O/P] gestosc  [N] korekcja  [M] formula  [T] tonemap  [Y] tekstury [B] bbox linie",
          g_fogEnabled ? "ON" : "OFF",
          g_fogDensity);
     text.drawLine(10.f, ty, line, 150,255,180,255, textOrtho); ty += lh;

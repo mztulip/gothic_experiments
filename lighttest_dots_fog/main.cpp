@@ -69,6 +69,8 @@ static float g_fogDensity    = 1.0f;
 static bool  g_texturesEnabled = true;
 static float g_fogPointSize  = 4.f;
 static bool g_lightCorrectionChanged = false;
+static bool g_showVobBBoxes = false;
+
 
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
@@ -99,6 +101,8 @@ static void keyCallback(GLFWwindow* w, int key, int, int action, int)
   if(key==GLFW_KEY_F) g_fogEnabled ^= 1;
   if(key==GLFW_KEY_O) g_fogDensity = std::max(0.f, g_fogDensity-0.1f);
   if(key==GLFW_KEY_P) g_fogDensity += 0.1f;
+  if(key == GLFW_KEY_B) g_showVobBBoxes ^= 1;
+
 }
 
 static void cursorCallback(GLFWwindow*, double x, double y) {
@@ -213,6 +217,111 @@ static void drawVobLabels(
     }
 }
 
+static std::vector<Vertex> buildBBoxLines(
+    const glm::vec3& bmin,
+    const glm::vec3& bmax)
+{
+    std::vector<Vertex> v;
+
+    const glm::vec3 p[8] =
+    {
+        {bmin.x, bmin.y, bmin.z},
+        {bmax.x, bmin.y, bmin.z},
+        {bmax.x, bmax.y, bmin.z},
+        {bmin.x, bmax.y, bmin.z},
+
+        {bmin.x, bmin.y, bmax.z},
+        {bmax.x, bmin.y, bmax.z},
+        {bmax.x, bmax.y, bmax.z},
+        {bmin.x, bmax.y, bmax.z}
+    };
+
+    auto addLine = [&](int a, int b)
+    {
+        v.push_back({p[a], {0,0,1}});
+        v.push_back({p[b], {0,0,1}});
+    };
+
+    // dół
+    addLine(0, 1);
+    addLine(1, 2);
+    addLine(2, 3);
+    addLine(3, 0);
+
+    // góra
+    addLine(4, 5);
+    addLine(5, 6);
+    addLine(6, 7);
+    addLine(7, 4);
+
+    // pionowe
+    addLine(0, 4);
+    addLine(1, 5);
+    addLine(2, 6);
+    addLine(3, 7);
+
+    return v;
+}
+
+static void drawVobBBoxes(
+    const std::vector<LoadedVob>& vobs,
+    GLuint prog,
+    GLuint bboxVao,
+    size_t vertexCount)
+{
+    glBindVertexArray(bboxVao);
+
+    glUniform1i(
+        glGetUniformLocation(prog, "uIsMarker"),
+        1
+    );
+
+    for(const auto& obj : vobs)
+    {
+        glm::vec3 center =
+            (obj.bboxMin + obj.bboxMax) * 0.5f;
+
+        glm::vec3 size =
+            (obj.bboxMax - obj.bboxMin) * 0.5f;
+
+        glm::mat4 model(1.f);
+
+        model = glm::translate(model, center);
+        model = glm::scale(model, size);
+
+        glUniformMatrix4fv(
+            glGetUniformLocation(prog, "uModel"),
+            1,
+            GL_FALSE,
+            glm::value_ptr(model)
+        );
+
+        // np. jasnozielony bbox
+        glm::vec3 color(0.1f, 1.0f, 0.2f);
+
+        glUniform3fv(
+            glGetUniformLocation(prog, "uLightColor"),
+            1,
+            glm::value_ptr(color)
+        );
+
+        glDrawArrays(
+            GL_LINES,
+            0,
+            GLsizei(vertexCount)
+        );
+    }
+
+    glBindVertexArray(0);
+}
+
+static std::vector<Vertex> buildUnitBBox()
+{
+    return buildBBoxLines(
+        {-1.f, -1.f, -1.f},
+        { 1.f,  1.f,  1.f}
+    );
+}
 
 
 int main(int argc, char** argv)
@@ -247,6 +356,7 @@ int main(int argc, char** argv)
   {
       worldVobs = loadVobsFromZen(zenPath);
   }
+
 
   if(!worldMode)
   {
@@ -419,6 +529,9 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
   std::vector<size_t> visibleLightIndices;
   visibleLightIndices.reserve(worldLights.size());
+
+  std::vector<Vertex> bboxVerts = buildUnitBBox();
+  GLuint bboxVao = makeVao(bboxVerts);
 
   // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
   // std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
@@ -789,11 +902,22 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     }
 
     drawVobMarkers(
-      worldVobs,
-      prog,
-      objectMarkerVao,
-      objectMarkerVerts.size()
-  );
+        worldVobs,
+        prog,
+        objectMarkerVao,
+        objectMarkerVerts.size()
+    );
+
+    if(g_showVobBBoxes)
+    {
+        drawVobBBoxes(
+            worldVobs,
+            prog,
+            bboxVao,
+            bboxVerts.size()
+        );
+    }
+
 
 
     //Wyswietlanie napisu  z typem VOBa
