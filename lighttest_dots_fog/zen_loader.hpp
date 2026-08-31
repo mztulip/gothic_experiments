@@ -71,12 +71,165 @@ static bool findStartPointFromZen(const std::string& path, glm::vec3& outPos) {
     }
   }
 
+
+static void debugLight(const zenkit::VLight& l)
+{
+    printf("\n========== LIGHT ==========\n");
+
+    printf("position:     %.2f %.2f %.2f\n",
+           l.position.x,
+           l.position.y,
+           l.position.z);
+
+    printf("range:        %.2f\n", l.range);
+
+    printf("color:        %d %d %d\n",
+           l.color.r,
+           l.color.g,
+           l.color.b);
+
+    printf("preset:       '%s'\n", l.preset.c_str());
+
+    printf("is_static:    %s\n", l.is_static ? "true" : "false");
+
+    printf("============================\n");
+}
+
+static const char* vobTypeName(zenkit::VirtualObjectType type)
+{
+    switch (type)
+    {
+        case zenkit::VirtualObjectType::zCVob:
+            return "zCVob";
+
+        case zenkit::VirtualObjectType::zCVobLevelCompo:
+            return "zCVobLevelCompo";
+
+        case zenkit::VirtualObjectType::oCItem:
+            return "oCItem";
+
+        case zenkit::VirtualObjectType::oCNpc:
+            return "oCNpc";
+
+        case zenkit::VirtualObjectType::zCVobLight:
+            return "zCVobLight";
+
+        case zenkit::VirtualObjectType::zCVobStartpoint:
+            return "zCVobStartpoint";
+
+        case zenkit::VirtualObjectType::oCMOB:
+            return "oCMOB";
+
+        case zenkit::VirtualObjectType::oCMobInter:
+            return "oCMobInter";
+
+        case zenkit::VirtualObjectType::oCMobContainer:
+            return "oCMobContainer";
+
+        case zenkit::VirtualObjectType::oCMobDoor:
+            return "oCMobDoor";
+
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static const char* visualTypeName(zenkit::VisualType type)
+{
+    switch (type)
+    {
+        case zenkit::VisualType::DECAL:
+            return "DECAL";
+
+        case zenkit::VisualType::MESH:
+            return "MESH";
+
+        case zenkit::VisualType::MULTI_RESOLUTION_MESH:
+            return "MULTI_RESOLUTION_MESH";
+
+        case zenkit::VisualType::PARTICLE_EFFECT:
+            return "PARTICLE_EFFECT";
+
+        case zenkit::VisualType::AI_CAMERA:
+            return "AI_CAMERA";
+
+        case zenkit::VisualType::MODEL:
+            return "MODEL";
+
+        case zenkit::VisualType::MORPH_MESH:
+            return "MORPH_MESH";
+
+        default:
+            return "UNKNOWN";
+    }
+}
+
+
+static void walkVobsForDebug(
+    const std::shared_ptr<zenkit::VirtualObject>& vob)
+{
+    printf("\n==============================\n");
+
+  printf("VOB type = %d (%s)\n",
+       static_cast<int>(vob->type),
+       vobTypeName(vob->type));
+
+    printf("position: %.2f %.2f %.2f\n",
+           vob->position.x,
+           vob->position.y,
+           vob->position.z);
+
+    printf("show_visual: %s\n",
+           vob->show_visual ? "true" : "false");
+
+    printf("visual: %s\n",
+           vob->visual ? "YES" : "NO");
+
+    if (vob->visual)
+    {
+        printf("visual ptr: %p\n", (void*)vob->visual.get());
+        printf("visual type: %d (%s)\n",
+          static_cast<int>(vob->visual->type),
+          visualTypeName(vob->visual->type));
+
+        printf("visual name: '%s'\n",
+              vob->visual->name.c_str());
+    }
+    else
+    {
+        printf("visual: NO\n");
+    }
+
+    printf("bbox min: %.2f %.2f %.2f\n",
+       vob->bbox.min.x,
+       vob->bbox.min.y,
+       vob->bbox.min.z);
+
+    printf("bbox max: %.2f %.2f %.2f\n",
+          vob->bbox.max.x,
+          vob->bbox.max.y,
+          vob->bbox.max.z);
+
+
+    printf("==============================\n");
+
+    for (auto& c : vob->children)
+        walkVobsForDebug(c);
+}
+
+
 static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
                               std::vector<LoadedLight>& out, int& skippedStatic)
 {
+
+
+  walkVobsForDebug(vob);
+
   if (vob->type == zenkit::VirtualObjectType::zCVobLight)
   {
     const auto& l = static_cast<const zenkit::VLight&>(*vob);
+
+    // debugLight(l);
 
     LoadedLight ll;
     ll.pos      = zenPosToGL(l.position.x, l.position.y, l.position.z);

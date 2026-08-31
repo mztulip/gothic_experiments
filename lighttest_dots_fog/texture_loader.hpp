@@ -33,6 +33,12 @@ struct Texture2D {
     }
 };
 
+enum class TextureSource {
+    Both,        // mydata z pierwszenstwem, fallback do Gothica (domyslne, jak dotychczas)
+    MyDataOnly,  // tylko katalog mydata
+    GothicOnly   // tylko katalog Gothica, mydata pomijane calkowicie
+};
+
 class TextureCache {
 private:
     std::unordered_map<std::string, std::string> fileIndex;
@@ -66,7 +72,7 @@ public:
     }
 
     // Indeksuje cały katalog tekstur RAZ na starcie (szybkie wyszukiwanie)
-   void indexDirectory(const std::string& gothicDir)
+   void indexDirectory(const std::string& gothicDir,  TextureSource source = TextureSource::Both)
 {
     fs::path customTexDir =
         fs::path("mydata") / "_Work" / "Data" / "Textures";
@@ -171,17 +177,24 @@ public:
         };
 
 
-        // =========================================================
-        // 1. CUSTOM - MA PIERWSZEŃSTWO
-        // =========================================================
-        indexTextureDirectory(customTexDir, true);
+        switch (source)
+        {
+            case TextureSource::Both:
+                // CUSTOM ma pierwszenstwo, potem fallback do Gothica
+                indexTextureDirectory(customTexDir, true);
+                indexTextureDirectory(gothicTexDir, false);
+                break;
 
+            case TextureSource::MyDataOnly:
+                indexTextureDirectory(customTexDir, true);
+                std::cout << "[TEXTURE] Tryb --mydata-only: katalog Gothica pominiety." << std::endl;
+                break;
 
-        // =========================================================
-        // 2. GOTHIC - TYLKO JEŻELI NIE MA CUSTOM
-        // =========================================================
-        indexTextureDirectory(gothicTexDir, false);
-
+            case TextureSource::GothicOnly:
+                indexTextureDirectory(gothicTexDir, true);
+                std::cout << "[TEXTURE] Tryb --gothic-only: katalog mydata pominiety." << std::endl;
+                break;
+        }
 
         indexed = true;
 

@@ -2,6 +2,7 @@
   https://www.worldofgothic.de/?go=moddb&action=view&fileID=994&cat=18
   ./lighttest "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Worlds/HELMS.ZEN"
   ./lighttest /home/mz/.wine/drive_c/Program\ Files\ \(x86\)/JoWood/Gothic\ II/_Work/Data/Worlds/OLDWORLD/OLDWORLD.ZEN
+   ./lighttest /home/mz/.wine/drive_c/Program\ Files\ \(x86\)/JoWood/Gothic\ II/_Work/Data/Worlds/NEWWORLD/NEWWORLD.ZEN
   ./lighttest "Helms Hammer.ZEN"
 */
 

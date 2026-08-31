@@ -257,6 +257,8 @@ static bool  g_fogEnabled    = false;
 static float g_fogDensity    = 1.0f;
 static bool  g_texturesEnabled = true;
 static float g_fogPointSize  = 4.f;
+static bool g_lightCorrectionChanged = false;
+
 
 static void keyCallback(GLFWwindow* w, int key, int, int action, int)
 {
@@ -268,7 +270,12 @@ static void keyCallback(GLFWwindow* w, int key, int, int action, int)
   if(key==GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, GLFW_TRUE);
   if(key==GLFW_KEY_Y) g_texturesEnabled ^= 1;
   if(key==GLFW_KEY_M) g_formulaMode ^= 1;
-  if(key ==GLFW_KEY_N) g_lightcorrection ^= 1;
+  if(key == GLFW_KEY_N)
+  {
+      g_lightcorrection ^= 1;
+      g_lightCorrectionChanged = true;
+  }
+
   if(key==GLFW_KEY_T) g_tonemap ^= 1;
   if(key>=GLFW_KEY_1 && key<=GLFW_KEY_6) {
     int idx = key-GLFW_KEY_1;
@@ -318,8 +325,50 @@ static float effectiveLightRange(const LoadedLight& l)
         : correctedRange(l.range);
 }
 
+struct FogBuffer
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t count = 0;
+    float range = 0.f;
+    bool generated = false;
+};
 
-int main(int argc, char** argv) {
+static void deleteFogBuffer(FogBuffer& fog)
+{
+    if(fog.vbo)
+    {
+        glDeleteBuffers(1, &fog.vbo);
+        fog.vbo = 0;
+    }
+
+    if(fog.vao)
+    {
+        glDeleteVertexArrays(1, &fog.vao);
+        fog.vao = 0;
+    }
+
+    fog.count = 0;
+    fog.generated = false;
+}
+
+
+int main(int argc, char** argv)
+{
+  std::string zenPath;
+  TextureSource texSource = TextureSource::Both;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "--mydata-only" || a == "--only-mydata") {
+      texSource = TextureSource::MyDataOnly;
+    } else if (a == "--gothic-only" || a == "--only-gothic") {
+      texSource = TextureSource::GothicOnly;
+    } else if (zenPath.empty()) {
+      zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
+    }
+  }
+
   std::vector<LoadedLight> worldLights;
   bool worldMode = false;
   if(argc>1)
@@ -344,7 +393,7 @@ int main(int argc, char** argv) {
   }
 
   TextureCache texCache;
-  texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/");
+  texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/", texSource);
   std::vector<SubMesh> worldSubMeshes;
 
   glm::vec3 camStart;
@@ -442,7 +491,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   auto t3 = std::chrono::high_resolution_clock::now();
   if(worldMode) //to jest false jeśli nie na świateł w pliku zen
   {
-    worldSubMeshes = loadWorldSubMeshesFromZen(argv[1], texCache);
+    worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, texCache);
 
     t1 = std::chrono::high_resolution_clock::now();
     printf("[LOG] Wczytanie ZEN z dysku: %.2f ms\n",
@@ -458,7 +507,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     centroid /= float(worldLights.size());
 
     glm::vec3 startPos;
-    bool hasStart = findStartPointFromZen(argv[1], startPos);
+    bool hasStart = findStartPointFromZen(zenPath, startPos);
     if(hasStart) {
       camStart   = startPos + glm::vec3(0.f, 80.f, 0.f); // +80 = orientacyjna wysokosc oczu nad stopami
       g_cam.pos  = camStart;
@@ -492,9 +541,11 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   visibleLightIndices.reserve(worldLights.size());
 
   // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
-  std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
-  std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
-  std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
+  // std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
+  // std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
+  // std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
+  std::vector<FogBuffer> fogPerLight(worldLights.size());
+
 
   t3 = std::chrono::high_resolution_clock::now();
   printf("[LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).\n");
@@ -508,8 +559,6 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   text.init();
 
   glm::vec3 demoLightPos = {0.f, 120.f, 0.f}; // swiatlo na srodku pokoju (tryb demo)
-
-  int lastPresetIdx = g_presetIdx;
 
   double lastTime = glfwGetTime();
   float  g_fpsSmoothed = 0.f;
@@ -636,59 +685,35 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // ============================================================
-    // AKTUALIZACJA ŚWIATŁA DEMO
+    // AKTUALIZACJA ZMIAN ZALEŻNYCH OD LIGHT CORRECTION
     // ============================================================
 
-    if(!worldMode)
+    if(g_lightCorrectionChanged)
     {
-        const Preset& pr = PRESETS[g_presetIdx];
+        for(auto& fog : fogPerLight)
+            deleteFogBuffer(fog);
 
-        worldLights.back().pos    = demoLightPos;
-        worldLights.back().range  = pr.range;
-        worldLights.back().color  = pr.color;
-        worldLights.back().preset = pr.name;
-
-        if(g_presetIdx != lastPresetIdx)
-        {
-            lastPresetIdx = g_presetIdx;
-
-            const auto& demoLight = worldLights.back();
-
-            // Używamy dokładnie tego samego Range,
-            // którego później używa renderer.
-            float range = effectiveLightRange(demoLight);
-
-            glm::vec3 bmin =
-                demoLight.pos -
-                glm::vec3(2.f * range);
-
-            glm::vec3 bmax =
-                demoLight.pos +
-                glm::vec3(2.f * range);
-
-            int count =
-                fogPointCountForRange(range);
-
-            auto pts =
-                buildFogPoints(bmin, bmax, count);
-
-            deleteVao(fogVaoPerLight.back());
-
-            fogVaoPerLight.back() =
-                makeVao(pts);
-
-            fogCountPerLight.back() =
-                pts.size();
-
-            fogGeneratedPerLight.back() =
-                true;
-        }
-
+        g_lightCorrectionChanged = false;
     }
 
 
     // ============================================================
-    // WYBÓR ŚWIATEŁ WIDOCZNYCH DLA KAMERY
+    // AKTUALIZACJA ŚWIATŁA DEMO
+    // ============================================================
+    
+
+    if(!worldMode)
+    {
+      const Preset& pr = PRESETS[g_presetIdx];
+
+      worldLights.back().pos    = demoLightPos;
+      worldLights.back().range  = pr.range;
+      worldLights.back().color  = pr.color;
+      worldLights.back().preset = pr.name;
+    }
+
+    // ============================================================
+    // WYBÓR ŚWIATEŁ WIDOCZNYCH DLA KAMERY + LENIWA GENERACJA FOG
     // ============================================================
 
     visibleLightIndices.clear();
@@ -697,10 +722,10 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     {
         const auto& l = worldLights[i];
 
-        // To jest faktyczny Range używany przez renderer.
-        float range = effectiveLightRange(l);
+        // Faktyczny Range używany przez renderer.
+        const float range = effectiveLightRange(l);
 
-        float distToCam =
+        const float distToCam =
             glm::length(l.pos - g_cam.pos);
 
         if(distToCam > range * 5.0f)
@@ -708,31 +733,38 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
         visibleLightIndices.push_back(i);
 
-        // ------------------------------------------------------------
-        // Leniwe generowanie fog
-        // ------------------------------------------------------------
-        if(g_fogEnabled && !fogGeneratedPerLight[i])
+        // --------------------------------------------------------
+        // Fog generujemy tylko wtedy, gdy jest potrzebny.
+        // --------------------------------------------------------
+
+        if(g_fogEnabled)
         {
-            glm::vec3 bmin =
-                l.pos - glm::vec3(2.f * range);
+            FogBuffer& fog = fogPerLight[i];
 
-            glm::vec3 bmax =
-                l.pos + glm::vec3(2.f * range);
+            const bool rangeChanged =
+                std::abs(fog.range - range) > 0.01f;
 
-            int count =
-                fogPointCountForRange(range);
+            if(!fog.generated || rangeChanged)
+            {
+                glm::vec3 bmin =
+                    l.pos - glm::vec3(2.f * range);
 
-            auto pts =
-                buildFogPoints(bmin, bmax, count);
+                glm::vec3 bmax =
+                    l.pos + glm::vec3(2.f * range);
 
-            fogVaoPerLight[i] =
-                makeVao(pts);
+                const int count =
+                    fogPointCountForRange(range);
 
-            fogCountPerLight[i] =
-                pts.size();
+                auto pts =
+                    buildFogPoints(bmin, bmax, count);
 
-            fogGeneratedPerLight[i] =
-                true;
+                deleteFogBuffer(fog);
+
+                fog.vao = makeVao(pts);
+                fog.count = pts.size();
+                fog.range = range;
+                fog.generated = true;
+            }
         }
     }
 
@@ -822,13 +854,19 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         {
             glUniform1i(glGetUniformLocation(prog, "uIsFog"), 1);
 
-            glBindVertexArray(fogVaoPerLight[i]);
+            const FogBuffer& fog = fogPerLight[i];
 
-            glDrawArrays(
-                GL_POINTS,
-                0,
-                GLsizei(fogCountPerLight[i])
-            );
+            if(fog.generated && fog.vao != 0 && fog.count > 0)
+            {
+                glBindVertexArray(fog.vao);
+
+                glDrawArrays(
+                    GL_POINTS,
+                    0,
+                    GLsizei(fog.count)
+                );
+            }
+
         }
 
 #ifdef LIGHTTEST_GL_DEBUG
@@ -898,6 +936,9 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
       }
     glfwSetWindowTitle(win, title);
     }
+
+  for(auto& fog : fogPerLight)
+    deleteFogBuffer(fog);
 
   glfwTerminate();
   return 0;
