@@ -311,6 +311,13 @@ static int fogPointCountForRange(float range)
   return std::clamp(count, 200, 2000000); // bezpiecznik gorny/dolny
 }
 
+static float effectiveLightRange(const LoadedLight& l)
+{
+    return (g_formulaMode == 0 || g_lightcorrection == 0)
+        ? l.range
+        : correctedRange(l.range);
+}
+
 
 int main(int argc, char** argv) {
   std::vector<LoadedLight> worldLights;
@@ -481,34 +488,20 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
   addBox(markerVerts, {0,0,0}, {15,15,15});
   GLuint markerVao = makeVao(markerVerts);
 
-  std::vector<std::vector<Vertex>> fogPerLight;
-  std::vector<GLuint> fogVaoPerLight;
-  std::vector<size_t> fogCountPerLight;
+  std::vector<size_t> visibleLightIndices;
+  visibleLightIndices.reserve(worldLights.size());
 
-  std::vector<const LoadedLight*> visibleLights;
-  visibleLights.reserve(worldLights.size());
-
-  // printf("[LOG] Generowanie punktów mgły dla %zu świateł...\n", worldLights.size());
-  // for(size_t i = 0; i < worldLights.size(); ++i)
-  // {
-  //   auto& l = worldLights[i];
-  //   glm::vec3 bmin = l.pos - glm::vec3(2*l.range);
-  //   glm::vec3 bmax = l.pos + glm::vec3(2*l.range);
-  //   int count = fogPointCountForRange(l.range);
-  //   auto pts = buildFogPoints(bmin, bmax, count);
-  //   fogVaoPerLight.push_back(makeVao(pts));
-  //   fogCountPerLight.push_back(pts.size());
-
-  //   // Pasek postępu / log co 20 świateł
-  //   if (i % 20 == 0 || i == worldLights.size() - 1) {
-  //       printf("  -> Postęp mgły: %zu/%zu świateł (%.0f%%)\n", 
-  //              i + 1, worldLights.size(), (float)(i + 1) / worldLights.size() * 100.f);
-  //   }
-  // }
+  // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
+  std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
+  std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
+  std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
 
   t3 = std::chrono::high_resolution_clock::now();
-  printf("[LOG] Czas generowania mgły: %.2f ms\n", 
-        std::chrono::duration<float, std::milli>(t3 - t2).count());
+  printf("[LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).\n");
+
+  // t3 = std::chrono::high_resolution_clock::now();
+  // printf("[LOG] Czas generowania mgły: %.2f ms\n", 
+  //       std::chrono::duration<float, std::milli>(t3 - t2).count());
   glEnable(GL_PROGRAM_POINT_SIZE);
 
   TextRenderer text;
@@ -643,16 +636,105 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // ============================================================
-    // PASS 3: kazde swiatlo, addytywnie, fullscreen quad (BEZ redrawu siatki)
+    // AKTUALIZACJA ŚWIATŁA DEMO
     // ============================================================
-    visibleLights.clear();
-    for(auto& l : worldLights)
+
+    if(!worldMode)
     {
-      float distToCam = glm::length(l.pos - g_cam.pos);
-      if(distToCam > l.range * 50.0f) continue; // zbyt daleko - i tak wygasa do 0
-      visibleLights.push_back(&l);
+        const Preset& pr = PRESETS[g_presetIdx];
+
+        worldLights.back().pos    = demoLightPos;
+        worldLights.back().range  = pr.range;
+        worldLights.back().color  = pr.color;
+        worldLights.back().preset = pr.name;
+
+        if(g_presetIdx != lastPresetIdx)
+        {
+            lastPresetIdx = g_presetIdx;
+
+            const auto& demoLight = worldLights.back();
+
+            // Używamy dokładnie tego samego Range,
+            // którego później używa renderer.
+            float range = effectiveLightRange(demoLight);
+
+            glm::vec3 bmin =
+                demoLight.pos -
+                glm::vec3(2.f * range);
+
+            glm::vec3 bmax =
+                demoLight.pos +
+                glm::vec3(2.f * range);
+
+            int count =
+                fogPointCountForRange(range);
+
+            auto pts =
+                buildFogPoints(bmin, bmax, count);
+
+            deleteVao(fogVaoPerLight.back());
+
+            fogVaoPerLight.back() =
+                makeVao(pts);
+
+            fogCountPerLight.back() =
+                pts.size();
+
+            fogGeneratedPerLight.back() =
+                true;
+        }
+
     }
 
+
+    // ============================================================
+    // WYBÓR ŚWIATEŁ WIDOCZNYCH DLA KAMERY
+    // ============================================================
+
+    visibleLightIndices.clear();
+
+    for(size_t i = 0; i < worldLights.size(); ++i)
+    {
+        const auto& l = worldLights[i];
+
+        // To jest faktyczny Range używany przez renderer.
+        float range = effectiveLightRange(l);
+
+        float distToCam =
+            glm::length(l.pos - g_cam.pos);
+
+        if(distToCam > range * 5.0f)
+            continue;
+
+        visibleLightIndices.push_back(i);
+
+        // ------------------------------------------------------------
+        // Leniwe generowanie fog
+        // ------------------------------------------------------------
+        if(g_fogEnabled && !fogGeneratedPerLight[i])
+        {
+            glm::vec3 bmin =
+                l.pos - glm::vec3(2.f * range);
+
+            glm::vec3 bmax =
+                l.pos + glm::vec3(2.f * range);
+
+            int count =
+                fogPointCountForRange(range);
+
+            auto pts =
+                buildFogPoints(bmin, bmax, count);
+
+            fogVaoPerLight[i] =
+                makeVao(pts);
+
+            fogCountPerLight[i] =
+                pts.size();
+
+            fogGeneratedPerLight[i] =
+                true;
+        }
+    }
 
     glEnable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
@@ -662,22 +744,45 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glUniform1f(glGetUniformLocation(lightProg,"uLightIntensity"), g_lightIntensity);
 
 
-    for(auto* lp : visibleLights)
+    for(size_t i : visibleLightIndices)
     {
-      const auto& l = *lp;
-      float effRange = (g_formulaMode == 0 || g_lightcorrection == 0) ? l.range : correctedRange(l.range);
+        const auto& l = worldLights[i];
 
-      int x0,y0,x1,y1;
-      if(!lightScissorRect(l.pos, effRange, view, proj, fbw, fbh, x0,y0,x1,y1))
-        continue; // bbox calkowicie poza ekranem - pomijamy
+        float range = effectiveLightRange(l);
 
-      glScissor(x0, y0, x1-x0, y1-y0);
+        int x0, y0, x1, y1;
 
-      glUniform3fv(locLightPos, 1, glm::value_ptr(l.pos));
-      glUniform3fv(locLightColor, 1, glm::value_ptr(l.color));
-      glUniform1f(locRange, effRange);
-      glDrawArrays(GL_TRIANGLES, 0, 6);
+        if(!lightScissorRect(
+                l.pos,
+                range,
+                view,
+                proj,
+                fbw,
+                fbh,
+                x0, y0, x1, y1))
+        {
+            continue;
+        }
+
+        glScissor(x0, y0, x1 - x0, y1 - y0);
+
+        glUniform3fv(
+            locLightPos,
+            1,
+            glm::value_ptr(l.pos)
+        );
+
+        glUniform3fv(
+            locLightColor,
+            1,
+            glm::value_ptr(l.color)
+        );
+
+        glUniform1f(locRange, range);
+
+        glDrawArrays(GL_TRIANGLES, 0, 6);
     }
+
 
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -689,53 +794,41 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
 
-    // //rYSUJEMY SWIATŁA
-    if(!worldMode)
+
+    for(size_t i : visibleLightIndices)
     {
-      const Preset& pr = PRESETS[g_presetIdx];
-      worldLights.back().pos     = demoLightPos;
-      worldLights.back().range   = pr.range;
-      worldLights.back().color   = pr.color;
-      worldLights.back().preset  = pr.name;
-
-      if(g_presetIdx != lastPresetIdx)
-      {
-        lastPresetIdx = g_presetIdx;
-        glm::vec3 bmin = worldLights.back().pos - glm::vec3(2.f * pr.range);
-        glm::vec3 bmax = worldLights.back().pos + glm::vec3(2.f * pr.range);
-        int count = fogPointCountForRange(pr.range);
-        auto pts = buildFogPoints(bmin, bmax, count);
-
-        deleteVao(fogVaoPerLight.back());
-        fogVaoPerLight.back()   = makeVao(pts);
-        fogCountPerLight.back() = pts.size();
-        // Uwaga: stary VAO/VBO wyciekaja (nie sa zwalniane) - patrz punkt 6 nizej
-      }
-
-    }
-
-    for(size_t i = 0; i < worldLights.size(); ++i) 
-    {
-      {
         const auto& l = worldLights[i];
-        glUniform3fv(glGetUniformLocation(prog,"uLightPos"), 1, glm::value_ptr(l.pos));
-        glUniform3fv(glGetUniformLocation(prog,"uLightColor"), 1, glm::value_ptr(l.color));
-        if(g_formulaMode == 0 || g_lightcorrection == 0)
-        {
-          glUniform1f(glGetUniformLocation(prog,"uRange"), l.range);
-        }
-        else
-        {
-          float effectiveRange = correctedRange(l.range);
-          glUniform1f(glGetUniformLocation(prog,"uRange"), effectiveRange);
-        }
+
+        glUniform3fv(
+            glGetUniformLocation(prog, "uLightPos"),
+            1,
+            glm::value_ptr(l.pos)
+        );
+
+        glUniform3fv(
+            glGetUniformLocation(prog, "uLightColor"),
+            1,
+            glm::value_ptr(l.color)
+        );
+
+        float range = effectiveLightRange(l);
+
+        glUniform1f(
+            glGetUniformLocation(prog, "uRange"),
+            range
+        );
 
         if(g_fogEnabled)
         {
-          glUniform1i(glGetUniformLocation(prog,"uIsFog"), 1);
-          glBindVertexArray(fogVaoPerLight[i]);            // <- TYLKO chmura NALEZACA do tego swiatla
-          glDrawArrays(GL_POINTS, 0, GLsizei(fogCountPerLight[i]));
+            glUniform1i(glGetUniformLocation(prog, "uIsFog"), 1);
 
+            glBindVertexArray(fogVaoPerLight[i]);
+
+            glDrawArrays(
+                GL_POINTS,
+                0,
+                GLsizei(fogCountPerLight[i])
+            );
         }
 
 #ifdef LIGHTTEST_GL_DEBUG
@@ -745,9 +838,9 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
           fprintf(stderr, "GL error po rysowaniu fog: 0x%x\n", err);
         }
 #endif
-      }
-      glUniform1i(glGetUniformLocation(prog,"uIsFog"), 0); // reset przed markerami
     }
+
+    glUniform1i(glGetUniformLocation(prog, "uIsFog"), 0);
 
     // znaczniki swiatel - opaque, z powrotem normalny depth test/write
     glDisable(GL_BLEND);
