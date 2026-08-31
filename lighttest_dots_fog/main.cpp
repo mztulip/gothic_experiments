@@ -947,8 +947,6 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
     for(const auto& obj : worldVobs)
     {
-        // Pokazuj napis tylko dla VOB-a,
-        // na który aktualnie patrzymy.
         if(!isVobInView(
             obj.pos,
             g_cam,
@@ -958,7 +956,14 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
             continue;
         }
 
-        std::string label = vobTypeName(obj.type);
+        std::string label =
+            std::string(vobTypeName(obj.type));
+
+        if(!obj.visualName.empty())
+        {
+            label += "\n";
+            label += obj.visualName;
+        }
 
         drawWorldLabel(
             text,
@@ -971,24 +976,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
             textOrtho,
             255, 255, 255, 255
         );
-
-        if(!obj.visualName.empty())
-        {
-            drawWorldLabel(
-                text,
-                obj.visualName,
-                obj.pos + glm::vec3(0.f, 24.f, 0.f),
-                view,
-                proj,
-                fbw,
-                fbh,
-                textOrtho,
-                180, 220, 255, 255
-            );
-        }
     }
-
-
 
     //////////////////////////////////////////////
     ///Wyswietlanie napisów HUD

@@ -129,13 +129,14 @@ static void drawWorldLabel(
     int fbw,
     int fbh,
     const glm::mat4& textOrtho,
-    unsigned char r = 255,
-    unsigned char g = 255,
-    unsigned char b = 255,
-    unsigned char a = 255)
+    unsigned char r,
+    unsigned char g,
+    unsigned char b,
+    unsigned char a)
 {
     glm::vec2 screenPos;
 
+    // Rzutujemy TYLKO jedną pozycję świata.
     if(!worldToScreen(
         worldPos,
         view,
@@ -147,17 +148,47 @@ static void drawWorldLabel(
         return;
     }
 
-    // Przybliżona szerokość znaku stb_easy_font
-    float width = float(label.length()) * 6.f;
+    // -----------------------------------------
+    // Podział tekstu po '\n'
+    // -----------------------------------------
 
-    text.drawLine(
-        screenPos.x - width * 0.5f,
-        screenPos.y,
-        label,
-        r, g, b, a,
-        textOrtho
-    );
+    size_t start = 0;
+    float lineY = screenPos.y;
+
+    while(start <= label.size())
+    {
+        size_t end = label.find('\n', start);
+
+        std::string line;
+
+        if(end == std::string::npos)
+            line = label.substr(start);
+        else
+            line = label.substr(start, end - start);
+
+        // -----------------------------------------
+        // Wyśrodkowanie linii
+        // -----------------------------------------
+
+        float width = float(line.length()) * 6.f;
+
+        text.drawLine(
+            screenPos.x - width * 0.5f,
+            lineY,
+            line,
+            r, g, b, a,
+            textOrtho
+        );
+
+        lineY += 14.f;
+
+        if(end == std::string::npos)
+            break;
+
+        start = end + 1;
+    }
 }
+
 
 static bool isVobInView(
     const glm::vec3& vobPos,
