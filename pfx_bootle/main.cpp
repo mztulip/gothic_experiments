@@ -289,16 +289,24 @@ out vec4 FragColor;
 
 void main() {
     // gl_PointCoord: (0,0) - (1,1) w obrebie kwadratu point sprite'a
-    vec2 c = gl_PointCoord - vec2(0.5);
-    float d = length(c) * 2.0; // 0 w centrum, 1 na krawedzi
+    vec2 p = (gl_PointCoord - vec2(0.5)) * 2.0; // przeskalowane do zakresu -1..1
+    float ax = abs(p.x);
+    float ay = abs(p.y);
 
-    if (d > 1.0) discard;
+    // Ksztalt "iskry-krzyza" jak w Gothicu: dwa cienkie, jasne ramiona
+    // (pion + poziom) plus jasny rdzen w centrum. To NIE jest okragla
+    // miekka plama, tylko wyrazny czteroramienny blask.
+    float armVert = exp(-ax * 10.0) * (1.0 - smoothstep(0.15, 1.0, ay));
+    float armHorz = exp(-ay * 10.0) * (1.0 - smoothstep(0.15, 1.0, ax));
+    float core    = exp(-length(p) * 5.5);
 
-    // miekki blask: jasny rdzen, delikatnie zanikajace brzegi
-    float glow = pow(1.0 - d, 2.2);
-    vec3 core = mix(vColor, vec3(1.0), 0.6 * glow);
+    float star = max(max(armVert, armHorz), core * 0.9);
+    if (star < 0.03) discard;
 
-    FragColor = vec4(core * glow, glow * vAlpha);
+    // rdzen niemal bialy, ramiona w kolorze czastki (blekit/zloto z definicji PFX)
+    vec3 col = mix(vColor, vec3(1.0), core * 0.85);
+
+    FragColor = vec4(col * star, star * vAlpha);
 }
 )GLSL";
 
@@ -507,47 +515,43 @@ static void createBottleMesh(GLuint& vao, GLuint& vbo, GLuint& ebo, int& indexCo
 //
 //   instance PFX_MAGIC_AURA_BOTTLE (C_PARTICLEFX)
 //   {
-//       ppsValue          = 28;          // czastek generowanych na sekunde
+//       ppsValue          = 5;           // czastek generowanych na sekunde (rzadko!)
 //       ppsIsLooping      = TRUE;
 //
-//       shpType           = "SPHERE";    // ksztalt emitera
+//       shpType           = "CYLINDER";  // ksztalt emitera: otoczka wokol calej butelki
 //       shpFOR            = "OBJECT";    // ukl. odniesienia: obiekt czy swiat
-//       shpDim            = "28 28 28";  // wymiary ksztaltu (cm w oryg. silniku)
-//       shpOffsetVec      = "0 90 0";    // przesuniecie wzgledem obiektu
-//       shpIsVolume       = FALSE;       // FALSE = emisja z "powloki" ksztaltu
+//       shpDim            = "44 120 0";  // promien otoczki / zasieg wysokosci (cm)
+//       shpOffsetVec      = "0 0 0";     // od podstawy butelki w gore
+//       shpIsVolume       = TRUE;        // lekki rozrzut promienia
 //
-//       dirMode           = "DIR";       // tryb kierunku wylotu czastki
-//       dirAngleHead      = 0;           // kat azymutu (glowny)
-//       dirAngleHeadVar   = 180;         // losowa wariacja azymutu
-//       dirAngleElev      = -80;         // kat elewacji (-90 = pionowo w gore)
-//       dirAngleElevVar   = 20;
+//       dirMode           = "NONE";      // iskry sie NIE poruszaja (statyczny blysk)
+//       velAvg            = 0;
+//       velVar            = 0;
 //
-//       velAvg            = 30;          // predkosc poczatkowa (srednia)
-//       velVar            = 12;          // wariacja predkosci
+//       lspPartAvg        = 0.65;        // krotki czas zycia pojedynczej iskry (s)
+//       lspPartVar        = 0.20;
 //
-//       lspPartAvg        = 1.6;         // czas zycia czastki (srednia, s)
-//       lspPartVar        = 0.5;         // wariacja czasu zycia
+//       flyGravity        = "0 0 0";     // brak ruchu
 //
-//       flyGravity        = "0 5 0";     // "grawitacja" dzialajaca na czastke
-//
-//       visSizeStart      = "4.5 4.5";   // rozmiar startowy
-//       visSizeEndScale   = 0.25;        // mnoznik rozmiaru na koncu zycia
+//       visSizeStart      = "10 10";     // rozmiar iskry-krzyzyka
 //       visAlphaFunc      = "ADD";       // tryb mieszania (ADD = swiecenie)
-//       visAlphaStart     = 255;         // przezroczystosc na starcie (0-255)
-//       visAlphaEnd       = 0;           // przezroczystosc na koncu (0-255)
-//       visTexColorStart  = "255 225 130"; // kolor na starcie zycia (RGB 0-255)
-//       visTexColorEnd    = "150 210 255"; // kolor na koncu zycia (RGB 0-255)
+//       visAlphaStart     = 255;         // szczyt jasnosci blysku
+//       visAlphaEnd       = 0;
+//       visTexColorStart  = "140 190 255"; // blekit
+//       visTexColorEnd    = "220 235 255"; // niemal bialy w szczycie blysku
+//       visIsOneShotFlash = TRUE;        // pojawia sie -> blyska -> gasnie, W MIEJSCU
 //   };
 //
 // Ponizsza struktura C++ mapuje 1:1 powyzsze pola i steruje naszym systemem
 // czastek dokladnie w ten sam sposob, w jaki sterowalby nim oryginalny
-// silnik ZenGin (ciagla emisja "particles per second", losowy kierunek
-// wg kata azymutu/elewacji + wariancji, predkosc/czas zycia z pary
-// srednia+wariancja, interpolacja rozmiaru/alfa/koloru w trakcie zycia
-// czastki, a nie z gory ustalona orbita jak w poprzedniej wersji).
+// silnik ZenGin: emisja punktow "particles per second" w losowych miejscach
+// na otoczce dookola calego obiektu, kazdy punkt jest STATYCZNY (velAvg=0),
+// a jego jasnosc/rozmiar podazaja za krzywa "rozblysk -> zanik" - dokladnie
+// tak, jak wygladaja pojedyncze iskry magicznej aury w Gothicu (a nie strumien
+// leacych w gore czastek, jak w poprzedniej wersji tego efektu).
 // ---------------------------------------------------------------------------
 
-enum class ShpType { POINT, SPHERE, CIRCLE, BOX };   // shpType
+enum class ShpType { POINT, SPHERE, CIRCLE, BOX, CYLINDER }; // shpType
 enum class ShpFOR  { OBJECT, WORLD };                 // shpFOR
 enum class DirMode { NONE, DIR };                     // dirMode
 enum class AlphaFunc { BLEND, ADD };                  // visAlphaFunc
@@ -558,6 +562,8 @@ struct ParticleFxDef {
     bool  ppsIsLooping   = true;
 
     // --- ksztalt emitera (shp = "shape") ---
+    // Dla CYLINDER: shpDim.x = promien "otoczki" wokol obiektu,
+    //               shpDim.y = wysokosc zakresu emisji (od shpOffsetVec.y w gore).
     ShpType   shpType      = ShpType::SPHERE;
     ShpFOR    shpFOR       = ShpFOR::OBJECT;
     glm::vec3 shpDim       = glm::vec3(0.28f);
@@ -590,41 +596,60 @@ struct ParticleFxDef {
     float     visAlphaEnd     = 0.0f;
     glm::vec3 visTexColorStart = glm::vec3(255, 225, 130); // RGB 0-255
     glm::vec3 visTexColorEnd   = glm::vec3(150, 210, 255); // RGB 0-255
+
+    // Tryb "pojedynczego błysku w miejscu": czastka NIE gasnie liniowo od
+    // visAlphaStart do visAlphaEnd, tylko rozblyskuje i gasnie wg krzywej
+    // sin(pi*t) - dokladnie tak, jak wygladaja pojedyncze iskry magicznej
+    // aury w Gothicu (staly punkt w przestrzeni, krotki rozblysk, zanik).
+    // Gdy false - uzywana jest klasyczna, ciagla interpolacja start->end
+    // (przydatna np. do dymu/ognia, gdzie czastka faktycznie leci i gasnie).
+    bool visIsOneShotFlash = true;
 };
 
 // Konkretna "instancja" efektu - odpowiednik instance PFX_... z Daedalusa.
+//
+// W przeciwienstwie do poprzedniej wersji (strumien iskier z okolic szyjki,
+// lecacy w gore) - to jest odwzorowanie faktycznego wygladu magicznej aury
+// z Gothic 1/2: pojedyncze, NIERUCHOME iskry-krzyzyki, ktore pojawiaja sie
+// w losowych miejscach na "otoczce" wokol calego przedmiotu, krotko
+// rozblyskuja i gasna. Zadnej predkosci, zadnej grawitacji, zaden strumien -
+// tylko emisja punktow w losowych miejscach cylindra otaczajacego butelke.
 static ParticleFxDef makePfxMagicAuraBottle() {
     ParticleFxDef fx;
-    fx.ppsValue        = 28.0f;
-    fx.ppsIsLooping     = true;
 
-    fx.shpType         = ShpType::SPHERE;
-    fx.shpFOR          = ShpFOR::OBJECT;
-    fx.shpDim          = glm::vec3(0.28f);
-    fx.shpOffsetVec    = glm::vec3(0.0f, 0.9f, 0.0f);
-    fx.shpIsVolume     = false;
+    // Rzadka emisja - w kazdej chwili widocznych jest tylko kilka iskier,
+    // tak jak w Gothicu (nie gesty strumien czastek).
+    fx.ppsValue     = 5.0f;
+    fx.ppsIsLooping = true;
 
-    fx.dirMode         = DirMode::DIR;
-    fx.dirAngleHead    = 0.0f;
-    fx.dirAngleHeadVar = 180.0f;
-    fx.dirAngleElev    = -80.0f;
-    fx.dirAngleElevVar = 20.0f;
+    // Ksztalt emitera: cylinder otaczajacy CALA butelke (nie tylko szyjke).
+    // shpDim.x = promien otoczki wokol butelki, shpDim.y = zasieg wysokosci.
+    fx.shpType      = ShpType::CYLINDER;
+    fx.shpFOR       = ShpFOR::OBJECT;
+    fx.shpDim       = glm::vec3(0.44f, 1.20f, 0.0f); // promien ~0.44, wysokosc 0-1.2
+    fx.shpOffsetVec = glm::vec3(0.0f, 0.0f, 0.0f);   // od samej podstawy butelki
+    fx.shpIsVolume  = true; // lekki rozrzut promienia, nie idealna powloka
 
-    fx.velAvg = 0.30f;
-    fx.velVar = 0.12f;
+    // Kierunek/predkosc nieistotne - iskry sie NIE poruszaja (statyczny błysk)
+    fx.dirMode = DirMode::NONE;
+    fx.velAvg  = 0.0f;
+    fx.velVar  = 0.0f;
+    fx.flyGravity = glm::vec3(0.0f);
 
-    fx.lspPartAvg = 1.6f;
-    fx.lspPartVar = 0.5f;
+    // Czas zycia pojedynczej iskry: krotki rozblysk (~0.5-0.9s)
+    fx.lspPartAvg = 0.65f;
+    fx.lspPartVar = 0.20f;
 
-    fx.flyGravity = glm::vec3(0.0f, 0.05f, 0.0f);
-
-    fx.visSizeStart     = glm::vec2(0.045f);
-    fx.visSizeEndScale  = 0.25f;
+    // Wyglad: mala, niebieska "gwiazdka/krzyzyk"
+    fx.visSizeStart     = glm::vec2(0.10f);
+    fx.visSizeEndScale  = 1.0f; // nieuzywane przy visIsOneShotFlash = true
     fx.visAlphaFunc     = AlphaFunc::ADD;
-    fx.visAlphaStart    = 255.0f;
+    fx.visAlphaStart    = 255.0f; // szczyt jasnosci blysku
     fx.visAlphaEnd      = 0.0f;
-    fx.visTexColorStart = glm::vec3(255, 225, 130);
-    fx.visTexColorEnd   = glm::vec3(150, 210, 255);
+    fx.visTexColorStart = glm::vec3(140, 190, 255); // blekit
+    fx.visTexColorEnd   = glm::vec3(220, 235, 255); // niemal bialy w szczycie
+    fx.visIsOneShotFlash = true; // pojawia sie -> rozblyskuje -> gasnie, w miejscu
+
     return fx;
 }
 
@@ -719,15 +744,30 @@ public:
 
             float t = glm::clamp(pt.life / pt.maxLife, 0.0f, 1.0f);
 
-            float alpha = glm::mix(m_def.visAlphaStart, m_def.visAlphaEnd, t) / 255.0f;
-            float size  = glm::mix(m_def.visSizeStart.x, m_def.visSizeStart.x * m_def.visSizeEndScale, t);
-            glm::vec3 color = glm::mix(m_def.visTexColorStart, m_def.visTexColorEnd, t) / 255.0f;
+            float alpha, size;
+            glm::vec3 color;
+
+            if (m_def.visIsOneShotFlash) {
+                // Krzywa "rozblysk -> zanik" (0 -> 1 -> 0), tak jak pojedyncza
+                // iskra magicznej aury w Gothicu: pojawia sie w miejscu,
+                // krotko jasno blyska, gasnie. visAlphaStart to szczyt jasnosci.
+                float pulse = sin(glm::pi<float>() * t);
+                alpha = pulse * (m_def.visAlphaStart / 255.0f);
+                size  = m_def.visSizeStart.x * (0.35f + 0.65f * pulse);
+                color = glm::mix(m_def.visTexColorStart, m_def.visTexColorEnd, pulse) / 255.0f;
+            } else {
+                // Klasyczna, ciagla interpolacja start->end (np. dym/ogien,
+                // gdzie czastka faktycznie leci i stopniowo gasnie).
+                alpha = glm::mix(m_def.visAlphaStart, m_def.visAlphaEnd, t) / 255.0f;
+                size  = glm::mix(m_def.visSizeStart.x, m_def.visSizeStart.x * m_def.visSizeEndScale, t);
+                color = glm::mix(m_def.visTexColorStart, m_def.visTexColorEnd, t) / 255.0f;
+            }
 
             m_buffer.push_back(pt.pos.x);
             m_buffer.push_back(pt.pos.y);
             m_buffer.push_back(pt.pos.z);
             m_buffer.push_back(alpha);
-            m_buffer.push_back(size * 60.0f); // przeskalowanie do rozmiaru w pikselach point sprite'a
+            m_buffer.push_back(size * 110.0f); // przeskalowanie do rozmiaru w pikselach point sprite'a
             m_buffer.push_back(color.r);
             m_buffer.push_back(color.g);
             m_buffer.push_back(color.b);
@@ -805,6 +845,15 @@ private:
                 float a = u(m_rng) * glm::pi<float>();
                 float r = m_def.shpIsVolume ? std::sqrt(std::abs(u(m_rng))) : 1.0f;
                 return m_def.shpOffsetVec + glm::vec3(cos(a), 0.0f, sin(a)) * m_def.shpDim.x * r;
+            }
+            case ShpType::CYLINDER: {
+                // punkt na "otoczce" wokol calej wysokosci obiektu:
+                // losowy kat (pelny okrag), losowa wysokosc 0..shpDim.y,
+                // promien shpDim.x (+ lekki rozrzut, gdy shpIsVolume)
+                float angle  = u(m_rng) * glm::pi<float>(); // -pi..pi = pelny okrag
+                float height = (u(m_rng) * 0.5f + 0.5f) * m_def.shpDim.y; // 0..shpDim.y
+                float radius = m_def.shpDim.x + (m_def.shpIsVolume ? u(m_rng) * 0.07f : 0.0f);
+                return m_def.shpOffsetVec + glm::vec3(cos(angle) * radius, height, sin(angle) * radius);
             }
             case ShpType::BOX:
             default:
