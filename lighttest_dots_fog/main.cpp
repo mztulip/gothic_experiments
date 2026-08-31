@@ -130,6 +130,89 @@ static float effectiveLightRange(const LoadedLight& l)
         : correctedRange(l.range);
 }
 
+static void drawVobMarkers(
+    const std::vector<LoadedVob>& vobs,
+    GLuint prog,
+    GLuint vao,
+    size_t vertexCount)
+{
+    glUniform1i(glGetUniformLocation(prog, "uIsMarker"), 1);
+    glBindVertexArray(vao);
+
+    for(const auto& obj : vobs)
+    {
+        glm::mat4 model =
+            glm::translate(glm::mat4(1.f), obj.pos);
+
+        glUniformMatrix4fv(
+            glGetUniformLocation(prog, "uModel"),
+            1,
+            GL_FALSE,
+            glm::value_ptr(model)
+        );
+
+        glm::vec3 color = vobTypeColor(obj.type);
+
+        glUniform3fv(
+            glGetUniformLocation(prog, "uLightColor"),
+            1,
+            glm::value_ptr(color)
+        );
+
+        glDrawArrays(
+            GL_TRIANGLES,
+            0,
+            GLsizei(vertexCount)
+        );
+    }
+
+    glBindVertexArray(0);
+}
+
+static void drawVobLabels(
+    const std::vector<LoadedVob>& vobs,
+    TextRenderer& text,
+    const Camera& cam,
+    const glm::mat4& view,
+    const glm::mat4& proj,
+    const glm::mat4& textOrtho,
+    int fbw,
+    int fbh)
+{
+    for(const auto& obj : vobs)
+    {
+        if(!isVobInView(
+            obj.pos,
+            cam,
+            200.f,
+            0.90f))
+        {
+            continue;
+        }
+
+        std::string label =
+            std::string(vobTypeName(obj.type));
+
+        if(!obj.visualName.empty())
+        {
+            label += "\n";
+            label += obj.visualName;
+        }
+
+        drawWorldLabel(
+            text,
+            label,
+            obj.pos + glm::vec3(0.f, 10.f, 0.f),
+            view,
+            proj,
+            fbw,
+            fbh,
+            textOrtho,
+            255, 255, 255, 255
+        );
+    }
+}
+
 
 
 int main(int argc, char** argv)
@@ -705,41 +788,13 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         }
     }
 
-    glUniform1i(
-    glGetUniformLocation(prog, "uIsMarker"),
-    1);
-    glBindVertexArray(objectMarkerVao);
+    drawVobMarkers(
+      worldVobs,
+      prog,
+      objectMarkerVao,
+      objectMarkerVerts.size()
+  );
 
-    for (const auto& obj : worldVobs)
-    {
-        glm::mat4 markerModel =
-            glm::translate(
-                glm::mat4(1.f),
-                obj.pos
-            );
-
-        glUniformMatrix4fv(
-            glGetUniformLocation(prog, "uModel"),
-            1,
-            GL_FALSE,
-            glm::value_ptr(markerModel)
-        );
-
-        // różne kolory dla różnych vobów
-        glm::vec3 color = vobTypeColor(obj.type);
-
-        glUniform3fv(
-            glGetUniformLocation(prog, "uLightColor"),
-            1,
-            glm::value_ptr(color)
-        );
-
-        glDrawArrays(
-            GL_TRIANGLES,
-            0,
-            GLsizei(objectMarkerVerts.size())
-        );
-    }
 
     //Wyswietlanie napisu  z typem VOBa
     glm::mat4 textOrtho =
@@ -752,38 +807,16 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         1.f
     );
 
-    for(const auto& obj : worldVobs)
-    {
-        if(!isVobInView(
-            obj.pos,
-            g_cam,
-            200.f,
-            0.90f))
-        {
-            continue;
-        }
-
-        std::string label =
-            std::string(vobTypeName(obj.type));
-
-        if(!obj.visualName.empty())
-        {
-            label += "\n";
-            label += obj.visualName;
-        }
-
-        drawWorldLabel(
-            text,
-            label,
-            obj.pos + glm::vec3(0.f, 10.f, 0.f),
-            view,
-            proj,
-            fbw,
-            fbh,
-            textOrtho,
-            255, 255, 255, 255
-        );
-    }
+    drawVobLabels(
+      worldVobs,
+      text,
+      g_cam,
+      view,
+      proj,
+      textOrtho,
+      fbw,
+      fbh
+  );
 
     //////////////////////////////////////////////
     ///Wyswietlanie napisów HUD

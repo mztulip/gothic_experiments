@@ -218,10 +218,14 @@ static void debugLight(const zenkit::VLight& l)
     printf("============================\n");
 }
 
+
 static const char* vobTypeName(zenkit::VirtualObjectType type)
 {
     switch (type)
     {
+        case zenkit::VirtualObjectType::UNKNOWN:
+            return "UNKNOWN";
+
         case zenkit::VirtualObjectType::zCVob:
             return "zCVob";
 
@@ -234,11 +238,56 @@ static const char* vobTypeName(zenkit::VirtualObjectType type)
         case zenkit::VirtualObjectType::oCNpc:
             return "oCNpc";
 
+        case zenkit::VirtualObjectType::zCMoverController:
+            return "zCMoverController";
+
+        case zenkit::VirtualObjectType::zCVobScreenFX:
+            return "zCVobScreenFX";
+
+        case zenkit::VirtualObjectType::zCVobStair:
+            return "zCVobStair";
+
+        case zenkit::VirtualObjectType::zCPFXController:
+            return "zCPFXController";
+
+        case zenkit::VirtualObjectType::zCVobAnimate:
+            return "zCVobAnimate";
+
+        case zenkit::VirtualObjectType::zCVobLensFlare:
+            return "zCVobLensFlare";
+
         case zenkit::VirtualObjectType::zCVobLight:
             return "zCVobLight";
 
+        case zenkit::VirtualObjectType::zCVobSpot:
+            return "zCVobSpot";
+
         case zenkit::VirtualObjectType::zCVobStartpoint:
             return "zCVobStartpoint";
+
+        case zenkit::VirtualObjectType::zCMessageFilter:
+            return "zCMessageFilter";
+
+        case zenkit::VirtualObjectType::zCCodeMaster:
+            return "zCCodeMaster";
+
+        case zenkit::VirtualObjectType::zCTriggerWorldStart:
+            return "zCTriggerWorldStart";
+
+        case zenkit::VirtualObjectType::zCCSCamera:
+            return "zCCSCamera";
+
+        case zenkit::VirtualObjectType::zCCamTrj_KeyFrame:
+            return "zCCamTrj_KeyFrame";
+
+        case zenkit::VirtualObjectType::oCTouchDamage:
+            return "oCTouchDamage";
+
+        case zenkit::VirtualObjectType::zCTriggerUntouch:
+            return "zCTriggerUntouch";
+
+        case zenkit::VirtualObjectType::zCEarthquake:
+            return "zCEarthquake";
 
         case zenkit::VirtualObjectType::oCMOB:
             return "oCMOB";
@@ -246,16 +295,75 @@ static const char* vobTypeName(zenkit::VirtualObjectType type)
         case zenkit::VirtualObjectType::oCMobInter:
             return "oCMobInter";
 
+        case zenkit::VirtualObjectType::oCMobBed:
+            return "oCMobBed";
+
+        case zenkit::VirtualObjectType::oCMobFire:
+            return "oCMobFire";
+
+        case zenkit::VirtualObjectType::oCMobLadder:
+            return "oCMobLadder";
+
+        case zenkit::VirtualObjectType::oCMobSwitch:
+            return "oCMobSwitch";
+
+        case zenkit::VirtualObjectType::oCMobWheel:
+            return "oCMobWheel";
+
         case zenkit::VirtualObjectType::oCMobContainer:
             return "oCMobContainer";
 
         case zenkit::VirtualObjectType::oCMobDoor:
             return "oCMobDoor";
 
+        case zenkit::VirtualObjectType::zCTrigger:
+            return "zCTrigger";
+
+        case zenkit::VirtualObjectType::zCTriggerList:
+            return "zCTriggerList";
+
+        case zenkit::VirtualObjectType::oCTriggerScript:
+            return "oCTriggerScript";
+
+        case zenkit::VirtualObjectType::oCTriggerChangeLevel:
+            return "oCTriggerChangeLevel";
+
+        case zenkit::VirtualObjectType::oCCSTrigger:
+            return "oCCSTrigger";
+
+        case zenkit::VirtualObjectType::zCMover:
+            return "zCMover";
+
+        case zenkit::VirtualObjectType::zCVobSound:
+            return "zCVobSound";
+
+        case zenkit::VirtualObjectType::zCVobSoundDaytime:
+            return "zCVobSoundDaytime";
+
+        case zenkit::VirtualObjectType::oCZoneMusic:
+            return "oCZoneMusic";
+
+        case zenkit::VirtualObjectType::oCZoneMusicDefault:
+            return "oCZoneMusicDefault";
+
+        case zenkit::VirtualObjectType::zCZoneZFog:
+            return "zCZoneZFog";
+
+        case zenkit::VirtualObjectType::zCZoneZFogDefault:
+            return "zCZoneZFogDefault";
+
+        case zenkit::VirtualObjectType::zCZoneVobFarPlane:
+            return "zCZoneVobFarPlane";
+
+        case zenkit::VirtualObjectType::zCZoneVobFarPlaneDefault:
+            return "zCZoneVobFarPlaneDefault";
+
         default:
             return "UNKNOWN";
     }
 }
+
+
 
 static const char* visualTypeName(zenkit::VisualType type)
 {
