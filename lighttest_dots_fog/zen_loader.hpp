@@ -8,8 +8,15 @@
 #include <zenkit/vobs/VirtualObject.hh>
 #include <string>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <cstdint>
+#include <cstdlib>
+#include <unordered_map>
+
 
 #include "texture_loader.hpp"
+#include "3ds_loader.h"
 
 static inline glm::vec3 zenPosToGL(float x, float y, float z)
 {
@@ -19,6 +26,39 @@ static inline glm::vec3 zenPosToGL(float x, float y, float z)
   // (ale zawsze tylko jedna naraz - negacja dwoch osi to obrot, nie odbicie).
   return glm::vec3(-x, y, z);
 }
+
+
+static glm::mat4 zenRotationToGL(const zenkit::Mat3& r)
+{
+    glm::mat4 R(1.0f);
+
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int col = 0; col < 3; ++col)
+        {
+            R[col][row] = r[row][col];
+        }
+    }
+
+    return R;
+}
+
+static glm::mat4 zenRotationToGL_nomod(const zenkit::Mat3& r)
+{
+    glm::mat4 R(1.0f);
+
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int col = 0; col < 3; ++col)
+        {
+            R[row][col] = r[row][col];
+        }
+    }
+
+    return R;
+}
+
+
 
 // ---------------------------------------------------------------------
 // Pomoce do budowy geometrii (podloga, kostka)
@@ -34,49 +74,457 @@ struct LoadedVob
     glm::vec3 pos;
     glm::vec3 bboxMin;
     glm::vec3 bboxMax;
+
     zenkit::VirtualObjectType type;
+
     std::string visualName;
+    std::string meshPath;
+
     bool showVisual = false;
+    bool meshLoaded = false;
+
+    GLuint meshVao = 0;
+    GLuint meshVbo = 0;
+    size_t meshVertexCount = 0;
+
+    glm::vec3 meshMin{0.f};
+    glm::vec3 meshMax{0.f};
+     // Transformacja VOB-a z ZEN
+    glm::mat4 rotation{1.f};
+    
+    // Transformacja lokalna zapisana w 3DS
+    // glm::mat4 meshLocalTransform{1.f};
+
 };
+
+
+
+static std::string findMeshFile(
+    const std::string& gothicDir,
+    const std::string& visualName)
+{
+    if (visualName.empty())
+        return {};
+
+    namespace fs = std::filesystem;
+
+    fs::path meshesDir =
+    fs::path(gothicDir) / "_Work" / "Data" / "Meshes";
+
+    printf("SZUKAM MESHY W: %s\n", meshesDir.string().c_str());
+
+    if (!fs::exists(meshesDir))
+    {
+        printf("KATALOG MESHES NIE ISTNIEJE!\n");
+        return {};
+    }
+
+    printf("KATALOG MESHES ISTNIEJE.\n");
+
+
+    std::string wanted = visualName;
+
+    std::transform(
+        wanted.begin(),
+        wanted.end(),
+        wanted.begin(),
+        [](unsigned char c)
+        {
+            return static_cast<char>(std::tolower(c));
+        });
+
+    try
+    {
+        for (const auto& entry :
+             fs::recursive_directory_iterator(meshesDir))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            std::string filename =
+                entry.path().filename().string();
+
+            std::transform(
+                filename.begin(),
+                filename.end(),
+                filename.begin(),
+                [](unsigned char c)
+                {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+            if (filename == wanted)
+                return entry.path().string();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        fprintf(stderr,
+                "Blad podczas szukania mesha: %s\n",
+                e.what());
+    }
+
+    return {};
+}
+
+
+static std::string getGothicDir()
+{
+    const char* env = std::getenv("GOTHIC2_DIR");
+
+    if (!env)
+    {
+        printf("GOTHIC2_DIR: NIE USTAWIONA\n");
+        return {};
+    }
+
+    printf("GOTHIC2_DIR RAW: %s\n", env);
+
+    std::string path(env);
+
+    // Usuwamy backslashe używane przez shell do escapowania spacji
+    path.erase(
+        std::remove(path.begin(), path.end(), '\\'),
+        path.end()
+    );
+
+    printf("GOTHIC2_DIR: %s\n", path.c_str());
+
+    return path;
+}
+
+static bool loadVobMesh(
+    const std::string& gothicDir,
+    const std::string& visualName,
+    Mesh3DS& mesh)
+{
+    if (visualName.empty())
+        return false;
+
+    std::string meshPath =
+        findMeshFile(gothicDir, visualName);
+
+    if (meshPath.empty())
+    {
+        printf(
+            "MESH NOT FOUND: %s\n",
+            visualName.c_str()
+        );
+
+        return false;
+    }
+
+    printf(
+        "MESH FOUND: %s -> %s\n",
+        visualName.c_str(),
+        meshPath.c_str()
+    );
+
+    if (!Loader3DS::load(meshPath, mesh))
+    {
+        printf(
+            "MESH LOAD FAILED: %s\n",
+            meshPath.c_str()
+        );
+
+        return false;
+    }
+
+    return true;
+}
+
+
+static void testLoadVobMesh(
+    const std::shared_ptr<zenkit::VirtualObject>& vob)
+{
+    if (!vob->show_visual)
+        return;
+
+    if (!vob->visual)
+        return;
+
+    if (vob->visual->name.empty())
+        return;
+
+    if (vob->visual->name[0] == '#')
+    {
+        printf(
+            "POMIJAM WEWNETRZNY VISUAL: '%s'\n",
+            vob->visual->name.c_str()
+        );
+
+        return;
+    }
+
+    if (vob->visual->type !=
+        zenkit::VisualType::MESH &&
+        vob->visual->type !=
+        zenkit::VisualType::MULTI_RESOLUTION_MESH)
+    {
+        return;
+    }
+
+    std::string gothicDir = getGothicDir();
+
+    if (gothicDir.empty())
+    {
+        printf("Brak GOTHIC2_DIR\n");
+        return;
+    }
+
+    std::string meshPath =
+        findMeshFile(
+            gothicDir,
+            vob->visual->name);
+
+    if (meshPath.empty())
+    {
+        printf(
+            "MESH NOT FOUND: %s\n",
+            vob->visual->name.c_str());
+
+        return;
+    }
+
+    printf(
+        "MESH FOUND: %s\n",
+        meshPath.c_str());
+
+    Mesh3DS mesh;
+
+    if (!Loader3DS::load(meshPath, mesh))
+    {
+        printf(
+            "MESH LOAD FAILED: %s\n",
+            meshPath.c_str());
+
+        return;
+    }
+
+    printf(
+        "  vertices: %zu\n",
+        mesh.vertices.size());
+
+    printf(
+        "  faces: %zu\n",
+        mesh.faces.size());
+
+    if (!mesh.vertices.empty())
+    {
+        printf(
+            "  vertex[0]: %.2f %.2f %.2f\n",
+            mesh.vertices[0].x,
+            mesh.vertices[0].y,
+            mesh.vertices[0].z);
+    }
+
+    if (!mesh.faces.empty())
+    {
+        printf(
+            "  face[0]: %u %u %u\n",
+            mesh.faces[0].a,
+            mesh.faces[0].b,
+            mesh.faces[0].c);
+    }
+
+    printf(
+        "  bounds min: %.2f %.2f %.2f\n",
+        mesh.minBounds.x,
+        mesh.minBounds.y,
+        mesh.minBounds.z
+    );
+
+    printf(
+        "  bounds max: %.2f %.2f %.2f\n",
+        mesh.maxBounds.x,
+        mesh.maxBounds.y,
+        mesh.maxBounds.z
+    );
+
+    printf(
+        "  center: %.2f %.2f %.2f\n",
+        mesh.center.x,
+        mesh.center.y,
+        mesh.center.z
+    );
+
+    printf(
+        "  maxDimension: %.2f\n",
+        mesh.maxDimension
+    );
+
+    printf(
+        "  materials: %zu\n",
+        mesh.materials.size()
+    );
+
+    if (mesh.materialForFace.size() != mesh.faces.size())
+    {
+        printf(
+            "  WARNING: materialForFace != faces!\n"
+        );
+    }
+
+    for (size_t i = 0; i < mesh.materialForFace.size(); ++i)
+    {
+        uint16_t mat = mesh.materialForFace[i];
+
+        if (mat >= mesh.materials.size())
+        {
+            printf(
+                "  WARNING: face[%zu] has invalid material %u\n",
+                i,
+                mat
+            );
+        }
+    }
+
+    for (size_t i = 0; i < mesh.materials.size(); ++i)
+    {
+        printf(
+            "    material[%zu]: name='%s' texture='%s'\n",
+            i,
+            mesh.materials[i].name.c_str(),
+            mesh.materials[i].textureFile.c_str()
+        );
+    }
+
+    for (size_t i = 0;
+     i < mesh.materialForFace.size();
+     ++i)
+    {
+        printf(
+            "    face[%zu] -> material %u\n",
+            i,
+            mesh.materialForFace[i]
+        );
+    }
+
+    std::vector<size_t> materialFaceCount(
+    mesh.materials.size(),
+    0
+);
+
+    for (uint16_t mat : mesh.materialForFace)
+    {
+        if (mat < materialFaceCount.size())
+            materialFaceCount[mat]++;
+    }
+
+    for (size_t i = 0; i < materialFaceCount.size(); ++i)
+    {
+        printf(
+            "  material[%zu] '%s' -> %zu faces\n",
+            i,
+            mesh.materials[i].name.c_str(),
+            materialFaceCount[i]
+        );
+    }
+}
+
 
 static void walkVobsForBoxes(
     const std::shared_ptr<zenkit::VirtualObject>& vob,
     std::vector<LoadedVob>& out)
 {
+    // printf(
+    //     "VOB: %s\n"
+    //     "pos = %.2f %.2f %.2f\n"
+    //     "rotation:\n"
+    //     "%.4f %.4f %.4f\n"
+    //     "%.4f %.4f %.4f\n"
+    //     "%.4f %.4f %.4f\n",
+    //     vob->visual->name.c_str(),
+    //     vob->position.x,
+    //     vob->position.y,
+    //     vob->position.z,
+
+    //     vob->rotation[0][0],
+    //     vob->rotation[0][1],
+    //     vob->rotation[0][2],
+
+    //     vob->rotation[1][0],
+    //     vob->rotation[1][1],
+    //     vob->rotation[1][2],
+
+    //     vob->rotation[2][0],
+    //     vob->rotation[2][1],
+    //     vob->rotation[2][2]
+    // );
+
     if (vob->type != zenkit::VirtualObjectType::zCVobLight)
     {
-        LoadedVob obj;
+      LoadedVob obj;
 
-        obj.pos = zenPosToGL(
-            vob->position.x,
-            vob->position.y,
-            vob->position.z
-        );
+      obj.pos = zenPosToGL(
+          vob->position.x,
+          vob->position.y,
+          vob->position.z
+      );
+//       obj.pos = glm::vec3(
+//     vob->position.x,
+//     vob->position.y,
+//     vob->position.z
+// );
 
-        obj.bboxMin = zenPosToGL(
-            vob->bbox.min.x,
-            vob->bbox.min.y,
-            vob->bbox.min.z
-        );
 
-        obj.bboxMax = zenPosToGL(
-            vob->bbox.max.x,
-            vob->bbox.max.y,
-            vob->bbox.max.z
-        );
+      // obj.rotation = zenRotationToGL(vob->rotation);
+      obj.rotation = zenRotationToGL(vob->rotation);
+      // obj.rotation = glm::mat4(1.f)`;
 
-        obj.type = vob->type;
-        obj.showVisual = vob->show_visual;
+      glm::vec3 bmin = zenPosToGL(
+          vob->bbox.min.x,
+          vob->bbox.min.y,
+          vob->bbox.min.z
+      );
 
-        if (vob->visual)
-            obj.visualName = vob->visual->name;
+      glm::vec3 bmax = zenPosToGL(
+          vob->bbox.max.x,
+          vob->bbox.max.y,
+          vob->bbox.max.z
+      );
 
-        out.push_back(obj);
+      obj.bboxMin = glm::min(bmin, bmax);
+      obj.bboxMax = glm::max(bmin, bmax);
+
+
+      obj.type = vob->type;
+      obj.showVisual = vob->show_visual;
+
+      if (vob->visual)
+      {
+          obj.visualName = vob->visual->name;
+
+          if (
+              vob->visual->type ==
+                  zenkit::VisualType::MESH ||
+              vob->visual->type ==
+                  zenkit::VisualType::MULTI_RESOLUTION_MESH
+          )
+          {
+              std::string gothicDir = getGothicDir();
+
+              if (!gothicDir.empty())
+              {
+                  obj.meshPath =
+                      findMeshFile(
+                          gothicDir,
+                          obj.visualName
+                      );
+
+                  obj.meshLoaded =
+                      !obj.meshPath.empty();
+              }
+          }
+      }
+
+      out.push_back(obj);
     }
 
     for (auto& c : vob->children)
         walkVobsForBoxes(c, out);
 }
+
 
 static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
 {
@@ -396,10 +844,9 @@ static const char* visualTypeName(zenkit::VisualType type)
 }
 
 
-static void walkVobsForDebug(
-    const std::shared_ptr<zenkit::VirtualObject>& vob)
+static void vobPrint(const std::shared_ptr<zenkit::VirtualObject>& vob)
 {
-    printf("\n==============================\n");
+  printf("\n==============================\n");
 
   printf("VOB type = %d (%s)\n",
        static_cast<int>(vob->type),
@@ -443,18 +890,26 @@ static void walkVobsForDebug(
 
 
     printf("==============================\n");
+}
 
-    for (auto& c : vob->children)
-        walkVobsForDebug(c);
+static void walkVobsForDebug(
+    const std::shared_ptr<zenkit::VirtualObject>& vob)
+{
+  vobPrint(vob);
+  testLoadVobMesh(vob);
+
+
+  for (auto& c : vob->children)
+      walkVobsForDebug(c);
 }
 
 
 static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
-                              std::vector<LoadedLight>& out, int& skippedStatic)
+                              std::vector<LoadedLight>& out, int& staticCount)
 {
 
 
-  walkVobsForDebug(vob);
+  // walkVobsForDebug(vob);
 
   if (vob->type == zenkit::VirtualObjectType::zCVobLight)
   {
@@ -471,33 +926,49 @@ static void walkVobsForLights(const std::shared_ptr<zenkit::VirtualObject>& vob,
 
     if (l.is_static)
     {
-      ++skippedStatic; // Jeśli nadal chcesz liczyć statyczne źródła (np. do celów statystyk)
+      ++staticCount; 
     }
 
     out.push_back(ll);
   }
 
   for (auto& c : vob->children)
-    walkVobsForLights(c, out, skippedStatic);
+    walkVobsForLights(c, out, staticCount);
 }
 
 static std::vector<LoadedLight> loadLightsFromZen(const std::string& path) 
 {
   std::vector<LoadedLight> out;
-  int skippedStatic = 0;
+  int staticCount = 0;
   try {
     auto reader = zenkit::Read::from(path);
     zenkit::World world;
     world.load(reader.get());
     for(auto& vob : world.world_vobs)
-      walkVobsForLights(vob, out, skippedStatic);
+      walkVobsForLights(vob, out, staticCount);
     }
   catch(const std::exception& e) {
     fprintf(stderr, "Nie udalo sie wczytac %s: %s\n", path.c_str(), e.what());
     return {};
     }
-  printf("Wczytano %zu dynamicznych swiatel z %s (pominieto %d statycznych - sa baked w vertex colors)\n",
-         out.size(), path.c_str(), skippedStatic);
+
+  int dynamicCount = static_cast<int>(out.size()) - staticCount;
+
+  printf(
+      "Wczytano %zu swiatel z %s: %d dynamicznych, %d statycznych\n",
+      out.size(),
+      path.c_str(),
+      dynamicCount,
+      staticCount
+  );
+
+  printf(
+      "Wczytano %zu swiatel z %s (w tym %d statycznych)\n",
+      out.size(),
+      path.c_str(),
+      staticCount
+  );
+
   for(auto& l : out)
     printf("  preset=%-16s range=%6.1f pos=(%.1f, %.1f, %.1f) typ=%s\n",
            l.preset.empty() ? "(brak nazwy)" : l.preset.c_str(),
@@ -528,17 +999,44 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
         const auto& fidx = mesh.polygons.feature_indices;
         const auto& midx = mesh.polygons.material_indices;
 
-        if(vidx.size() != fidx.size() || vidx.size() % 3 != 0) return {};
+        if (vidx.size() != fidx.size() ||
+            vidx.size() % 3 != 0 ||
+            midx.size() != vidx.size() / 3)
+        {
+            return {};
+        }
+
 
         // Grupowanie wierzchołków po indeksie materiału
-        std::unordered_map<int32_t, std::vector<Vertex>> groupedVerts;
+        std::unordered_map<uint32_t, std::vector<Vertex>> groupedVerts;
 
         for (size_t i = 0; i + 2 < vidx.size(); i += 3)
         {
             size_t polyIdx = i / 3;
             uint32_t matIdx = midx[polyIdx];
 
+
+            if (vidx[i + 0] >= mesh.vertices.size() ||
+                vidx[i + 1] >= mesh.vertices.size() ||
+                vidx[i + 2] >= mesh.vertices.size())
+            {
+                continue;
+            }
+
+            if (fidx[i + 0] >= mesh.features.size() ||
+                fidx[i + 1] >= mesh.features.size() ||
+                fidx[i + 2] >= mesh.features.size())
+            {
+                continue;
+            }
+
             auto pushVertex = [&](size_t idx) {
+              if (vidx[idx] >= mesh.vertices.size())
+                  return;
+
+              if (fidx[idx] >= mesh.features.size())
+                  return;
+
                 const auto& p = mesh.vertices[vidx[idx]];
                 const auto& n = mesh.features[fidx[idx]].normal;
                 const auto& uv = mesh.features[fidx[idx]].texture;
@@ -599,3 +1097,4 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
 
     return submeshes;
 }
+

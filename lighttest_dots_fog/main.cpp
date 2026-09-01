@@ -33,6 +33,10 @@
 #include "fog_buffer.hpp"
 #include "geometry_room.hpp"
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
 static int g_presetIdx = 1; // start na FIRE - to ten najbardziej sporny
 
 
@@ -102,6 +106,12 @@ static void keyCallback(GLFWwindow* w, int key, int, int action, int)
   if(key==GLFW_KEY_O) g_fogDensity = std::max(0.f, g_fogDensity-0.1f);
   if(key==GLFW_KEY_P) g_fogDensity += 0.1f;
   if(key == GLFW_KEY_B) g_showVobBBoxes ^= 1;
+  if(key==GLFW_KEY_TAB)
+  {
+    g_mouseCaptured = !g_mouseCaptured;
+    glfwSetInputMode(w, GLFW_CURSOR, g_mouseCaptured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    g_firstMouse = true;
+  }
 
 }
 
@@ -145,6 +155,9 @@ static void drawVobMarkers(
 
     for(const auto& obj : vobs)
     {
+        if (obj.meshLoaded)
+          continue;
+
         glm::mat4 model =
             glm::translate(glm::mat4(1.f), obj.pos);
 
@@ -323,6 +336,363 @@ static std::vector<Vertex> buildUnitBBox()
     );
 }
 
+static bool createVobMeshGL(LoadedVob& vob)
+{
+    if (!vob.meshLoaded)
+        return false;
+
+    Mesh3DS mesh;
+
+    if (!Loader3DS::load(vob.meshPath, mesh))
+    {
+        printf(
+            "Nie udalo sie zaladowac VOB mesh: %s\n",
+            vob.meshPath.c_str()
+        );
+
+        vob.meshLoaded = false;
+        return false;
+    }
+
+    std::vector<Vertex> verts;
+    verts.reserve(mesh.faces.size() * 3);
+
+    // ------------------------------------------------------------
+    // FLAT SHADING
+    //
+    // Każdy face dostaje własne 3 wierzchołki.
+    // Wszystkie trzy mają tę samą normalną.
+    // ------------------------------------------------------------
+    for (const auto& face : mesh.faces)
+    {
+        glm::vec3 p[3];
+
+        p[0] = glm::vec3(
+            mesh.vertices[face.a].x,
+            mesh.vertices[face.a].y,
+            mesh.vertices[face.a].z
+        );
+
+        p[1] = glm::vec3(
+            mesh.vertices[face.b].x,
+            mesh.vertices[face.b].y,
+            mesh.vertices[face.b].z
+        );
+
+        p[2] = glm::vec3(
+            mesh.vertices[face.c].x,
+            mesh.vertices[face.c].y,
+            mesh.vertices[face.c].z
+        );
+
+        // Normalna ściany.
+        glm::vec3 normal =
+            glm::normalize(
+                glm::cross(
+                    p[1] - p[0],
+                    p[2] - p[0]
+                )
+            );
+
+            printf(
+    "NORMAL: %.3f %.3f %.3f\n",
+    normal.x,
+    normal.y,
+    normal.z
+);
+
+
+        verts.push_back({
+            p[0],
+            normal,
+            glm::vec2(0.0f)
+        });
+
+        verts.push_back({
+            p[1],
+            normal,
+            glm::vec2(0.0f)
+        });
+
+        verts.push_back({
+            p[2],
+            normal,
+            glm::vec2(0.0f)
+        });
+    }
+
+    if (verts.empty())
+    {
+        vob.meshLoaded = false;
+        return false;
+    }
+
+    // ------------------------------------------------------------
+    // GPU
+    // ------------------------------------------------------------
+
+    glGenVertexArrays(1, &vob.meshVao);
+    glGenBuffers(1, &vob.meshVbo);
+
+    glBindVertexArray(vob.meshVao);
+
+    glBindBuffer(
+        GL_ARRAY_BUFFER,
+        vob.meshVbo
+    );
+
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        verts.size() * sizeof(Vertex),
+        verts.data(),
+        GL_STATIC_DRAW
+    );
+
+    // ------------------------------------------------------------
+    // POSITION - location 0
+    // ------------------------------------------------------------
+
+    glVertexAttribPointer(
+        0,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, pos)
+    );
+
+    glEnableVertexAttribArray(0);
+
+    // ------------------------------------------------------------
+    // NORMAL - location 1
+    // ------------------------------------------------------------
+
+    glVertexAttribPointer(
+        1,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, normal)
+    );
+
+    glEnableVertexAttribArray(1);
+
+    // ------------------------------------------------------------
+    // UV - location 2
+    // ------------------------------------------------------------
+
+    glVertexAttribPointer(
+        2,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, uv)
+    );
+
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    vob.meshVertexCount =
+        verts.size();
+
+    printf(
+        "VOB MESH GL: %s -> %zu vertices (flat shading)\n",
+        vob.visualName.c_str(),
+        vob.meshVertexCount
+    );
+
+    return true;
+}
+
+
+static glm::mat4 getVobBaseRotation()
+{
+    return
+           glm::rotate(
+            glm::mat4(1.f),
+            glm::radians(180.f),
+            glm::vec3(0.f, 1.f, 0.f)
+        )*
+        glm::rotate(
+            glm::mat4(1.f),
+            glm::radians(90.f),
+            glm::vec3(-1.f, 0.f, 0.f)
+        );
+        
+}
+
+
+static void drawVobVisuals(
+    const std::vector<LoadedVob>& vobs,
+    GLuint prog)
+{
+    GLint locModel =
+        glGetUniformLocation(prog, "uModel");
+
+    GLint locAlbedo =
+        glGetUniformLocation(prog, "uAlbedo");
+
+    GLint locIsMarker =
+        glGetUniformLocation(prog, "uIsMarker");
+
+    for (const auto& obj : vobs)
+    {
+        if (!obj.meshLoaded)
+            continue;
+
+            //    glm::mat4 model =
+            // glm::translate(
+            //     glm::mat4(1.f),
+            //     obj.pos
+            // );
+// glm::mat4 model =
+//     glm::translate(glm::mat4(1.f), obj.pos)
+//     * obj.rotation
+//     * obj.meshRotation;
+// glm::mat4 model =
+    // glm::translate(glm::mat4(1.f), obj.pos)
+    // * glm::rotate(
+    //     glm::mat4(1.f),
+    //     glm::radians(90.f),
+    //     glm::vec3(1.f, 0.f, 0.f)
+    //   ); //to daje do góry nogami objekty ale już leżące tylko stół stoi na blacie
+
+    // glm::translate(glm::mat4(1.f), obj.pos)
+    // * glm::rotate(
+    //     glm::mat4(1.f),
+    //     glm::radians(90.f),
+    //     glm::vec3(0.f, 1.f, 0.f)
+    //   );//to obróciło w Z
+    //     glm::translate(glm::mat4(1.f), obj.pos)
+    // * glm::rotate(
+    //     glm::mat4(1.f),
+    //     glm::radians(90.f),
+    //     glm::vec3(0.f, 0.f, 1.f)
+    //   );// to wywrocilo na drugi bok
+
+    //     glm::translate(glm::mat4(1.f), obj.pos)
+    // * glm::rotate(
+    //     glm::mat4(1.f),
+    //     glm::radians(90.f),
+    //     glm::vec3(-1.f, 0.f, 0.f)
+    //   ); // tu stoją normalnie
+
+    // obj.rotation = glm::mat4(1.f);
+
+    glm::mat4 model =
+        glm::translate(glm::mat4(1.f), obj.pos)
+        * obj.rotation
+        * getVobBaseRotation();
+
+
+        // glm::mat4 model =
+        //   glm::translate(glm::mat4(1.f), obj.pos)
+        //   * glm::rotate(
+        //       glm::mat4(1.f),
+        //       glm::radians(-90.0f),
+        //       glm::vec3(1.f, 0.f, 0.f)
+        //   )
+        //   * obj.rotation;
+
+
+        glUniformMatrix4fv(
+            locModel,
+            1,
+            GL_FALSE,
+            glm::value_ptr(model)
+        );
+
+        glm::vec3 color =
+            vobTypeColor(obj.type);
+
+        glUniform3fv(
+            locAlbedo,
+            1,
+            glm::value_ptr(color)
+        );
+
+
+        glUniform1i(locIsMarker, 0);
+
+        glBindVertexArray(obj.meshVao);
+
+        glDrawArrays(
+            GL_TRIANGLES,
+            0,
+            static_cast<GLsizei>(
+                obj.meshVertexCount
+            )
+        );
+    }
+
+    glBindVertexArray(0);
+}
+
+static void drawImGuiControls(GLFWwindow* win, bool worldMode)
+{
+    ImGui::Begin("Sterowanie (lighttest)");
+
+    ImGui::TextDisabled("TAB - przelacz mysz <-> UI");
+
+    bool mouseCaptured = g_mouseCaptured;
+    if(ImGui::Checkbox("Kamera przechwytuje mysz [TAB]", &mouseCaptured))
+    {
+        g_mouseCaptured = mouseCaptured;
+        glfwSetInputMode(win, GLFW_CURSOR, g_mouseCaptured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        g_firstMouse = true;
+    }
+
+    ImGui::Separator();
+
+    bool tex = g_texturesEnabled;
+    if(ImGui::Checkbox("Tekstury [Y]", &tex)) g_texturesEnabled = tex;
+
+    bool tonemap = g_tonemap;
+    if(ImGui::Checkbox("Tonemap [T]", &tonemap)) g_tonemap = tonemap;
+
+    bool corr = g_lightcorrection;
+    if(ImGui::Checkbox("Korekcja zasiegu [N]", &corr))
+    {
+        g_lightcorrection = corr;
+        g_lightCorrectionChanged = true;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Formula atenuacji [M]:");
+    int formula = g_formulaMode;
+    ImGui::RadioButton("LINIA", &formula, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("OBECNA", &formula, 1);
+    g_formulaMode = formula;
+
+    ImGui::SliderFloat("Intensywnosc [ [ / ] ]", &g_lightIntensity, 0.f, 5.f, "%.3f");
+
+    ImGui::Separator();
+    bool fog = g_fogEnabled;
+    if(ImGui::Checkbox("Mgla [F]", &fog)) g_fogEnabled = fog;
+    ImGui::SliderFloat("Gestosc mgly [O/P]", &g_fogDensity, 0.f, 5.f, "%.2f");
+
+    if(!worldMode)
+    {
+        ImGui::Separator();
+        ImGui::Text("Presety [1-6]:");
+        const int presetCount = int(sizeof(PRESETS)/sizeof(PRESETS[0]));
+        for(int i = 0; i < presetCount; ++i)
+        {
+            if(i % 3 != 0) ImGui::SameLine();
+            bool selected = (g_presetIdx == i);
+            if(selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f,0.59f,0.98f,1.0f));
+            if(ImGui::Button(PRESETS[i].name))
+                g_presetIdx = i;
+            if(selected) ImGui::PopStyleColor();
+        }
+    }
+
+    ImGui::End();
+}
 
 int main(int argc, char** argv)
 {
@@ -391,6 +761,24 @@ int main(int argc, char** argv)
   glfwSetCursorPosCallback(win, cursorCallback);
 
   glEnable(GL_DEPTH_TEST);
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& imguiIo = ImGui::GetIO(); (void)imguiIo;
+  ImGui::StyleColorsDark();
+  ImGui_ImplGlfw_InitForOpenGL(win, true);
+  ImGui_ImplOpenGL3_Init("#version 330");
+
+  if (worldMode)
+  {
+      for (auto& vob : worldVobs)
+      {
+          if (vob.meshLoaded)
+          {
+              createVobMeshGL(vob);
+          }
+      }
+  }
 
   GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
   std::string fragFullSrc = buildFragSource(FRAG_SRC);
@@ -573,6 +961,12 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     }
 
     glfwPollEvents();
+
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    drawImGuiControls(win, worldMode);
 
     float speed = g_cam.speed * dt * (g_keys[GLFW_KEY_LEFT_SHIFT] ? 3.f : 1.f);
     if(g_keys[GLFW_KEY_W]) g_cam.pos += g_cam.front()*speed;
@@ -901,12 +1295,20 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         }
     }
 
+
+    drawVobVisuals(
+        worldVobs,
+        prog
+    );
+
     drawVobMarkers(
         worldVobs,
         prog,
         objectMarkerVao,
         objectMarkerVerts.size()
     );
+
+
 
     if(g_showVobBBoxes)
     {
@@ -953,6 +1355,10 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
        view, proj, g_fpsSmoothed, g_texturesEnabled
       );
 
+    
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
     glfwSwapBuffers(win);
 
     char title[700];
@@ -981,6 +1387,11 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
   for(auto& fog : fogPerLight)
     deleteFogBuffer(fog);
+
+
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
 
   glfwTerminate();
   return 0;

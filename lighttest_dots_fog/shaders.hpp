@@ -59,7 +59,8 @@ out vec2 vUV;
 void main() {
   vec4 world = uModel * vec4(aPos, 1.0);
   vWorldPos = world.xyz;
-  vNormal   = mat3(uModel) * aNormal;
+ // vNormal   = mat3(uModel) * aNormal;
+  vNormal = mat3(transpose(inverse(uModel))) * aNormal;
   vUV       = aUV;
   gl_Position = uProj * uView * world;
 }
@@ -87,6 +88,36 @@ void main() {
   outWorldPos = vec4(vWorldPos, 1.0);
 }
 )GLSL";
+
+// static const char* GEOM_FRAG_SRC = R"GLSL(
+// #version 330 core
+
+// in vec3 vWorldPos;
+// in vec3 vNormal;
+// in vec2 vUV;
+
+// layout(location = 0) out vec4 outAlbedo;
+// layout(location = 1) out vec4 outNormal;
+// layout(location = 2) out vec4 outWorldPos;
+
+// uniform sampler2D uTexture;
+// uniform bool uHasTexture;
+// uniform vec3 uAlbedo;
+
+// void main()
+// {
+//     vec3 n = normalize(vNormal);
+
+//     // TEST NORMALNYCH
+//     outAlbedo = vec4(n * 0.5 + 0.5, 1.0);
+
+//     // normalna do G-buffer
+//     outNormal = vec4(n, 0.0);
+
+//     outWorldPos = vec4(vWorldPos, 1.0);
+// }
+// )GLSL";
+
 
 static const char* LIGHT_VERT_SRC = R"GLSL(
 #version 330 core
