@@ -144,7 +144,7 @@ static bool loadVobMesh(
 
 static void walkVobs(
     const std::shared_ptr<zenkit::VirtualObject>& vob,
-    std::vector<LoadedVob>& out)
+    std::vector<LoadedVob>& out, const glm::vec3& parentPos = glm::vec3(0.0f))
 {
     // printf(
     //     "VOB: %s\n"
@@ -171,21 +171,26 @@ static void walkVobs(
     //     vob->rotation[2][2]
     // );
 
+    glm::vec3 localPos = glm::vec3(
+        vob->position.x,
+        vob->position.y,
+        vob->position.z
+    );
+
+    glm::vec3 worldZenPos = parentPos + localPos;
+
+    glm::vec3 worldPos = zenPosToGL(
+        worldZenPos.x,
+        worldZenPos.y,
+        worldZenPos.z
+    );
+
     if (vob->type != zenkit::VirtualObjectType::zCVobLight)
     {
+
       LoadedVob obj;
 
-      obj.pos = zenPosToGL(
-          vob->position.x,
-          vob->position.y,
-          vob->position.z
-      );
-//       obj.pos = glm::vec3(
-//     vob->position.x,
-//     vob->position.y,
-//     vob->position.z
-// );
-
+      obj.pos = worldPos;
 
       // obj.rotation = zenRotationToGL(vob->rotation);
  
@@ -241,7 +246,7 @@ static void walkVobs(
     }
 
     for (auto& c : vob->children)
-        walkVobs(c, out);
+        walkVobs(c, out, worldZenPos);
 }
 
 static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
