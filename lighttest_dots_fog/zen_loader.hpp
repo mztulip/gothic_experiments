@@ -93,7 +93,7 @@ struct LoadedVob
     glm::mat4 rotation{1.f};
     
     // Transformacja lokalna zapisana w 3DS
-    // glm::mat4 meshLocalTransform{1.f};
+    glm::mat4 meshLocalTransform{1.f};
 
 };
 
@@ -423,7 +423,7 @@ static void testLoadVobMesh(
 }
 
 
-static void walkVobsForBoxes(
+static void walkVobs(
     const std::shared_ptr<zenkit::VirtualObject>& vob,
     std::vector<LoadedVob>& out)
 {
@@ -522,7 +522,7 @@ static void walkVobsForBoxes(
     }
 
     for (auto& c : vob->children)
-        walkVobsForBoxes(c, out);
+        walkVobs(c, out);
 }
 
 
@@ -538,7 +538,7 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
         world.load(reader.get());
 
         for (auto& vob : world.world_vobs)
-            walkVobsForBoxes(vob, out);
+            walkVobs(vob, out);
     }
     catch (const std::exception& e)
     {
