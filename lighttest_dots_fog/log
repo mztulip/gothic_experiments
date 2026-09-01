@@ -49190,7 +49190,7 @@ VOB MESH GL: OC_SAECKE_01.3DS -> 756 vertices (flat shading)
   -> SUCCESS: Wczytano NW_CITY_RICH_CEILING_01.TGA (512x512)
 [TEXTURE] request='NW_MONASTERY_WALL_105.TGA' -> 'mydata/_Work/Data/Textures/NW_Monastery_Wall_105.tga'
   -> SUCCESS: Wczytano NW_MONASTERY_WALL_105.TGA (512x512)
-[LOG] Wczytanie ZEN z dysku: 76.98 ms
+[LOG] Wczytanie ZEN z dysku: 83.10 ms
 [LOG] Utworzono 35 podsiatek świata
 Znaleziono zCVobStartpoint: (-1598.5, 995.6, 1765.2)
 [LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).
