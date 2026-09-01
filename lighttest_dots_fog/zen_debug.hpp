@@ -459,3 +459,37 @@ static void walkVobsForDebug(
   for (auto& c : vob->children)
       walkVobsForDebug(c);
 }
+
+void debugPrintVob(const std::shared_ptr<zenkit::VirtualObject>& vob, int depth = 0)
+{
+    if (!vob) return;
+
+    std::string indent(depth * 2, ' ');
+    
+    // Nowy sposób pobierania nazwy visuala w ZenKit
+    std::string visualName = vob->visual ? vob->visual->name : "";
+
+    std::cout << indent << "[VOB] Name: '" << vob->vob_name 
+              << "' | Visual: '" << visualName << "'"
+              << " | Type: " << static_cast<int>(vob->type) << "\n";
+
+    std::cout << indent << "  |- Pos Local: (" 
+              << vob->position.x << ", " 
+              << vob->position.y << ", " 
+              << vob->position.z << ")\n";
+
+    std::cout << indent << "  |- Children count: " << vob->children.size() << "\n";
+
+    if (depth > 0 && !visualName.empty())
+    {
+        std::cout << indent << "  |-> !!! TEN OBIEKT JEST DZIECKIEM (depth=" << depth 
+                  << ") I MA VISUAL - WYMAGA MACIERZY RODZICA !!!\n";
+    }
+
+    std::cout << indent << "--------------------------------------------------\n";
+
+    for (const auto& child : vob->children)
+    {
+        debugPrintVob(child, depth + 1);
+    }
+}

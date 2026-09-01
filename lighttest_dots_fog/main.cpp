@@ -354,6 +354,8 @@ static bool createVobMeshGL(LoadedVob& vob)
         return false;
     }
 
+    vob.meshLocalTransform = mesh.localTransform;
+
     std::vector<Vertex> verts;
     verts.reserve(mesh.faces.size() * 3);
 
@@ -394,12 +396,12 @@ static bool createVobMeshGL(LoadedVob& vob)
                 )
             );
 
-            printf(
-    "NORMAL: %.3f %.3f %.3f\n",
-    normal.x,
-    normal.y,
-    normal.z
-);
+        // printf(
+        //     "VOB FACE NORMAL: %.3f %.3f %.3f\n",
+        //     normal.x,
+        //     normal.y,
+        //     normal.z
+        // );
 
 
         verts.push_back({
@@ -543,59 +545,11 @@ static void drawVobVisuals(
         if (!obj.meshLoaded)
             continue;
 
-            //    glm::mat4 model =
-            // glm::translate(
-            //     glm::mat4(1.f),
-            //     obj.pos
-            // );
-// glm::mat4 model =
-//     glm::translate(glm::mat4(1.f), obj.pos)
-//     * obj.rotation
-//     * obj.meshRotation;
-// glm::mat4 model =
-    // glm::translate(glm::mat4(1.f), obj.pos)
-    // * glm::rotate(
-    //     glm::mat4(1.f),
-    //     glm::radians(90.f),
-    //     glm::vec3(1.f, 0.f, 0.f)
-    //   ); //to daje do góry nogami objekty ale już leżące tylko stół stoi na blacie
-
-    // glm::translate(glm::mat4(1.f), obj.pos)
-    // * glm::rotate(
-    //     glm::mat4(1.f),
-    //     glm::radians(90.f),
-    //     glm::vec3(0.f, 1.f, 0.f)
-    //   );//to obróciło w Z
-    //     glm::translate(glm::mat4(1.f), obj.pos)
-    // * glm::rotate(
-    //     glm::mat4(1.f),
-    //     glm::radians(90.f),
-    //     glm::vec3(0.f, 0.f, 1.f)
-    //   );// to wywrocilo na drugi bok
-
-    //     glm::translate(glm::mat4(1.f), obj.pos)
-    // * glm::rotate(
-    //     glm::mat4(1.f),
-    //     glm::radians(90.f),
-    //     glm::vec3(-1.f, 0.f, 0.f)
-    //   ); // tu stoją normalnie
-
-    // obj.rotation = glm::mat4(1.f);
-
     glm::mat4 model =
         glm::translate(glm::mat4(1.f), obj.pos)
         * obj.rotation
         * getVobBaseRotation();
 
-
-        // glm::mat4 model =
-        //   glm::translate(glm::mat4(1.f), obj.pos)
-        //   * glm::rotate(
-        //       glm::mat4(1.f),
-        //       glm::radians(-90.0f),
-        //       glm::vec3(1.f, 0.f, 0.f)
-        //   )
-        //   * obj.rotation;
 
 
         glUniformMatrix4fv(

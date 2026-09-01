@@ -95,6 +95,7 @@ struct LoadedVob
     glm::mat4 rotation{1.f};
     
     // Transformacja lokalna zapisana w 3DS
+    //Narazie tego nie używam bo po tej transformacji obiekty mam w powietrzu
     glm::mat4 meshLocalTransform{1.f};
 
 };
@@ -187,8 +188,8 @@ static void walkVobs(
 
 
       // obj.rotation = zenRotationToGL(vob->rotation);
-      obj.rotation = zenRotationToGL(vob->rotation);
-      // obj.rotation = glm::mat4(1.f)`;
+ 
+      obj.rotation = glm::mat4(1.f);
 
       glm::vec3 bmin = zenPosToGL(
           vob->bbox.min.x,
@@ -243,7 +244,6 @@ static void walkVobs(
         walkVobs(c, out);
 }
 
-
 static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
 {
     std::vector<LoadedVob> out;
@@ -256,7 +256,10 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
         world.load(reader.get());
 
         for (auto& vob : world.world_vobs)
+        {
+            debugPrintVob(vob, 0);
             walkVobs(vob, out);
+        }
     }
     catch (const std::exception& e)
     {

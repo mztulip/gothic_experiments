@@ -97,13 +97,6 @@ struct GPUMesh
 };
 
 
-struct RenderableVob
-{
-    std::shared_ptr<zenkit::VirtualObject> vob;
-    std::shared_ptr<GPUMeshPart> mesh;
-};
-
-
 class Loader3DS {
 public:
     static bool load(const std::string& filepath, Mesh3DS& outMesh) {
