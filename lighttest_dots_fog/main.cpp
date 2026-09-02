@@ -598,6 +598,8 @@ static void drawVobsToGBuffer(
     GLint locHasTex,
     GLint locAlbedo)
 {
+    const glm::vec3 vobFallbackColor(0.45f, 0.45f, 0.5f); //szary
+
     for (const auto& obj : vobs)
     {
         if (!obj.meshLoaded)
@@ -612,7 +614,7 @@ static void drawVobsToGBuffer(
 
         // Na razie VOB-y nie maja przypisanych tekstur, wiec albedo = kolor typu
         glUniform1i(locHasTex, 0);
-        glUniform3fv(locAlbedo, 1, glm::value_ptr(vobTypeColor(obj.type)));
+        glUniform3fv(locAlbedo, 1, glm::value_ptr(vobFallbackColor));
 
         glBindVertexArray(obj.meshVao);
         glDrawArrays(GL_TRIANGLES, 0, GLsizei(obj.meshVertexCount));
