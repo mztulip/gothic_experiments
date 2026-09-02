@@ -22,6 +22,12 @@
 
 namespace fs = std::filesystem;
 
+enum CameraMode
+{
+    CAMERA_ORBIT = 0,
+    CAMERA_FPS = 1
+};
+
 enum RenderMode
 {
     RENDER_TEXTURED = 0,
@@ -258,6 +264,38 @@ static float g_ambientIntensity = 0.25f;  // Jasność tła/cieni (Ambient)
 static float g_lightDistanceMult = 0.75f; // Dystans od środka obiektu
 static float g_lightHeightOffset = 0.5f;  // Wysokość ponad najwyższy punkt obiektu
 
+static CameraMode g_cameraMode = CAMERA_ORBIT;
+static glm::vec3 g_fpsCameraPos = glm::vec3(0.0f, 100.0f, 200.0f);
+static float g_flySpeed = 500.0f; // Domyślna prędkość latania
+
+static void switchCameraMode(CameraMode newMode, const glm::vec3& currentRotatedCenter)
+{
+    if (g_cameraMode == newMode) return;
+
+    if (newMode == CAMERA_FPS)
+    {
+        // Wyznacz pozycję kamery w miejscu, gdzie znajdowało się oko w trybie Orbit
+        float radYaw = glm::radians(g_yaw);
+        float radPitch = glm::radians(g_pitch);
+
+        g_fpsCameraPos.x = currentRotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
+        g_fpsCameraPos.y = currentRotatedCenter.y + g_distance * sin(radPitch);
+        g_fpsCameraPos.z = currentRotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
+
+        // Odwróć kąt patrzenia, by patrzeć w stronę środka obiektu
+        g_yaw += 180.0f;
+        g_pitch = -g_pitch;
+    }
+    else
+    {
+        // Powrót do trybu Orbit
+        g_yaw -= 180.0f;
+        g_pitch = -g_pitch;
+    }
+
+    g_cameraMode = newMode;
+}
+
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -304,8 +342,17 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse) return;
 
-    g_distance -= static_cast<float>(yoffset) * (g_distance * 0.1f);
-    g_distance = std::clamp(g_distance, 1.0f, 50000.0f);
+    if (g_cameraMode == CAMERA_ORBIT)
+    {
+        g_distance -= static_cast<float>(yoffset) * (g_distance * 0.1f);
+        g_distance = std::clamp(g_distance, 1.0f, 50000.0f);
+    }
+    else // CAMERA_FPS – regulacja prędkości latania
+    {
+        g_flySpeed += static_cast<float>(yoffset) * (g_flySpeed * 0.2f);
+        g_flySpeed = std::clamp(g_flySpeed, 10.0f, 100000.0f);
+    }
+
     g_lastInteractionTime = glfwGetTime();
 }
 
@@ -349,6 +396,11 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
                 g_needMeshReload = true;
                 g_scrollToSelected = true;
             }
+        }
+
+        if (key == GLFW_KEY_C)
+        {
+            g_cameraMode = (g_cameraMode == CAMERA_ORBIT) ? CAMERA_FPS : CAMERA_ORBIT;
         }
     }
 }
@@ -621,6 +673,12 @@ int main(int argc, char** argv)
 
             g_distance = mesh.maxDimension * 2.5f;
 
+            g_flySpeed = std::clamp(mesh.maxDimension * 0.5f, 50.0f, 10000.0f);
+
+            glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+            glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
+            g_fpsCameraPos = rotatedCenter + glm::vec3(0.0f, mesh.maxDimension * 0.2f, g_distance);
+
             if (activeTex.id != fallbackTex.id)
             {
                 activeTex.free();
@@ -682,25 +740,69 @@ int main(int argc, char** argv)
             g_needMeshReload = false;
         }
 
-        if (!io.WantCaptureKeyboard)
-        {
-            if (g_keys[GLFW_KEY_A]) g_yaw -= 90.0f * dt;
-            if (g_keys[GLFW_KEY_D]) g_yaw += 90.0f * dt;
+        // --- OBSŁUGA POZYCJI KAMERY I KLAWIATURY ---
+        glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
 
-            if (g_keys[GLFW_KEY_W] || g_keys[GLFW_KEY_EQUAL]) g_distance -= g_distance * 1.5f * dt;
-            if (g_keys[GLFW_KEY_S] || g_keys[GLFW_KEY_MINUS]) g_distance += g_distance * 1.5f * dt;
+        glm::vec3 camPos;
+        glm::vec3 camFront;
+        glm::vec3 camUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+        float radYaw = glm::radians(g_yaw);
+        float radPitch = glm::radians(g_pitch);
+
+        if (g_cameraMode == CAMERA_ORBIT)
+        {
+            if (!io.WantCaptureKeyboard)
+            {
+                if (g_keys[GLFW_KEY_A]) g_yaw -= 90.0f * dt;
+                if (g_keys[GLFW_KEY_D]) g_yaw += 90.0f * dt;
+                if (g_keys[GLFW_KEY_W] || g_keys[GLFW_KEY_EQUAL]) g_distance -= g_distance * 1.5f * dt;
+                if (g_keys[GLFW_KEY_S] || g_keys[GLFW_KEY_MINUS]) g_distance += g_distance * 1.5f * dt;
+            }
+
+            g_distance = std::clamp(g_distance, 0.1f, 500000.0f);
+
+            camPos.x = rotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
+            camPos.y = rotatedCenter.y + g_distance * sin(radPitch);
+            camPos.z = rotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
+
+            camFront = glm::normalize(rotatedCenter - camPos);
+
+            bool userActive = g_isMouseDown ||
+                              g_keys[GLFW_KEY_A] || g_keys[GLFW_KEY_D] || 
+                              g_keys[GLFW_KEY_W] || g_keys[GLFW_KEY_S] ||
+                              g_keys[GLFW_KEY_EQUAL] || g_keys[GLFW_KEY_MINUS];
+
+            if (!userActive && (now - g_lastInteractionTime >= 3.0))
+            {
+                g_yaw += 30.0f * dt;
+            }
         }
-
-        g_distance = std::clamp(g_distance, 0.1f, 500000.0f);
-
-        bool userActive = g_isMouseDown ||
-                          g_keys[GLFW_KEY_A] || g_keys[GLFW_KEY_D] || 
-                          g_keys[GLFW_KEY_W] || g_keys[GLFW_KEY_S] ||
-                          g_keys[GLFW_KEY_EQUAL] || g_keys[GLFW_KEY_MINUS];
-
-        if (!userActive && (now - g_lastInteractionTime >= 3.0))
+        else // CAMERA_FPS
         {
-            g_yaw += 30.0f * dt;
+            // Przeliczanie wektora kierunku patrzenia
+            camFront.x = cos(radPitch) * sin(radYaw);
+            camFront.y = sin(radPitch);
+            camFront.z = cos(radPitch) * cos(radYaw);
+            camFront = glm::normalize(camFront);
+
+            glm::vec3 camRight = glm::normalize(glm::cross(camFront, camUp));
+
+            float speed = g_flySpeed * dt;
+            if (g_keys[GLFW_KEY_LEFT_SHIFT]) speed *= 2.5f; // przyspieszenie z Shiftem
+
+            if (!io.WantCaptureKeyboard)
+            {
+                if (g_keys[GLFW_KEY_W]) g_fpsCameraPos += camFront * speed;
+                if (g_keys[GLFW_KEY_S]) g_fpsCameraPos -= camFront * speed;
+                if (g_keys[GLFW_KEY_A]) g_fpsCameraPos -= camRight * speed;
+                if (g_keys[GLFW_KEY_D]) g_fpsCameraPos += camRight * speed;
+                if (g_keys[GLFW_KEY_E] || g_keys[GLFW_KEY_SPACE]) g_fpsCameraPos += camUp * speed;
+                if (g_keys[GLFW_KEY_Q]) g_fpsCameraPos -= camUp * speed;
+            }
+
+            camPos = g_fpsCameraPos;
         }
 
         g_pitch = std::clamp(g_pitch, -89.0f, 89.0f);
@@ -711,7 +813,7 @@ int main(int argc, char** argv)
 
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
-        
+
         // --- Panel Lista Plików ---
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(320, (float)height));
@@ -776,6 +878,21 @@ int main(int argc, char** argv)
                                    (int)(g_currentFileIdx + 1), (int)g_fileList.size(), filename.c_str());
                 ImGui::Separator();
 
+                // Wybór trybu kamery
+                const char* camModeNames[] = { "Obiekt / Orbit (C)", "Latanie FPS / Swiat (C)" };
+                int currentCamInt = static_cast<int>(g_cameraMode);
+                if (ImGui::Combo("Kamera (C)", &currentCamInt, camModeNames, IM_ARRAYSIZE(camModeNames)))
+                {
+                    switchCameraMode(static_cast<CameraMode>(currentCamInt), rotatedCenter);
+                }
+
+                if (g_cameraMode == CAMERA_FPS)
+                {
+                    ImGui::SliderFloat("Predkosc (Rolka)", &g_flySpeed, 10.0f, 10000.0f, "%.0f");
+                }
+
+                ImGui::Separator();
+
                 const char* modeNames[] = { "Tekstura (Textured)", "Jednolity kolor (Solid)", "Siatka (Wireframe)" };
                 int currentModeInt = static_cast<int>(g_renderMode);
                 if (ImGui::Combo("Tryb widoku (M)", &currentModeInt, modeNames, IM_ARRAYSIZE(modeNames)))
@@ -790,6 +907,18 @@ int main(int argc, char** argv)
                 ImGui::Text("Gora / Dol / N / P: Zmiana pliku");
                 ImGui::Text("LPM / A / D: Obrot kamery");
                 ImGui::Text("Rolka / W / S: Zoom");
+                ImGui::Text("C: Zmiana trybu kamery");
+                if (g_cameraMode == CAMERA_ORBIT)
+                {
+                    ImGui::Text("LPM: Obrot | Rolka: Zoom");
+                }
+                else
+                {
+                    ImGui::Text("LPM: Rozgladanie sie");
+                    ImGui::Text("WASD: Przod/Lewo/Tyl/Prawo");
+                    ImGui::Text("E / Q: Gora / Dol");
+                    ImGui::Text("Shift: Szybki ruch");
+                }
             }
             ImGui::End();
         }
@@ -842,22 +971,7 @@ int main(int argc, char** argv)
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 
-        float radYaw = glm::radians(g_yaw);
-        float radPitch = glm::radians(g_pitch);
-
-        //Potrzebne  aby prawidłowo wyswitlać pliki 3ds konwersjia Y-up / Z-up
-        glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-
-        // Przelicz punkt środkowy (center) przez macierz obrotu
-        glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
-
-        //Pozycję kamery wylicz względem rotatedCenter
-        glm::vec3 camPos;
-        camPos.x = rotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
-        camPos.y = rotatedCenter.y + g_distance * sin(radPitch);
-        camPos.z = rotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
-
-        glm::mat4 view = glm::lookAt(camPos, rotatedCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 view = glm::lookAt(camPos, camPos + camFront, camUp);
         
         float nearPlane = std::max(0.1f, mesh.maxDimension * 0.01f);
         float farPlane  = std::max(1000.0f, mesh.maxDimension * 100.0f);
