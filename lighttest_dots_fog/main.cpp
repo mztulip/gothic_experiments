@@ -1250,10 +1250,34 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     }
 
 
-    drawVobVisuals(
-        worldVobs,
-        prog
-    );
+    // --- Ambient pass dla VOB-ow ---
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glUniform1i(glGetUniformLocation(prog, "uAmbientOnly"), 1);
+    drawVobVisuals(worldVobs, prog);
+
+    // --- Addytywny pass per-swiatlo dla VOB-ow ---
+    glUniform1i(glGetUniformLocation(prog, "uAmbientOnly"), 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+
+    for(size_t i : visibleLightIndices) {
+        const auto& l = worldLights[i];
+        float range = effectiveLightRange(l);
+
+        glUniform3fv(glGetUniformLocation(prog, "uLightPos"),   1, glm::value_ptr(l.pos));
+        glUniform3fv(glGetUniformLocation(prog, "uLightColor"), 1, glm::value_ptr(l.color));
+        glUniform1f (glGetUniformLocation(prog, "uRange"), range);
+
+        drawVobVisuals(worldVobs, prog);
+    }
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
 
     drawVobMarkers(
         worldVobs,
