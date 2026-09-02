@@ -187,12 +187,12 @@ public:
 
             case TextureSource::MyDataOnly:
                 indexTextureDirectory(customTexDir, true);
-                std::cout << "[TEXTURE] Tryb --mydata-only: katalog Gothica pominiety." << std::endl;
+                // std::cout << "[TEXTURE] Tryb --mydata-only: katalog Gothica pominiety." << std::endl;
                 break;
 
             case TextureSource::GothicOnly:
                 indexTextureDirectory(gothicTexDir, true);
-                std::cout << "[TEXTURE] Tryb --gothic-only: katalog mydata pominiety." << std::endl;
+                // std::cout << "[TEXTURE] Tryb --gothic-only: katalog mydata pominiety." << std::endl;
                 break;
         }
 
@@ -306,13 +306,13 @@ public:
             return tex;
         }
 
-        std::cout
-            << "[TEXTURE] request='"
-            << requestedFilename
-            << "' -> '"
-            << resolvedPath
-            << "'"
-            << std::endl;
+        // std::cout
+        //     << "[TEXTURE] request='"
+        //     << requestedFilename
+        //     << "' -> '"
+        //     << resolvedPath
+        //     << "'"
+        //     << std::endl;
 
         int width = 0;
         int height = 0;

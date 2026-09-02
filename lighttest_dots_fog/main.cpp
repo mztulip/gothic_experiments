@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <random>
 #include <chrono>
+#include <unordered_map>
 
 #include "info_render.hpp"
 #include "camera.hpp"
@@ -336,10 +337,28 @@ static std::vector<Vertex> buildUnitBBox()
     );
 }
 
+struct GLMeshHandle
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t vertexCount = 0;
+};
+
+static std::unordered_map<std::string, GLMeshHandle> g_vobMeshCache;
+
 static bool createVobMeshGL(LoadedVob& vob)
 {
     if (!vob.meshLoaded)
         return false;
+
+    auto cacheIt = g_vobMeshCache.find(vob.meshPath);
+    if (cacheIt != g_vobMeshCache.end())
+    {
+        vob.meshVao         = cacheIt->second.vao;
+        vob.meshVbo          = cacheIt->second.vbo;
+        vob.meshVertexCount = cacheIt->second.vertexCount;
+        return true;
+    }
 
     Mesh3DS mesh;
 
@@ -499,6 +518,8 @@ static bool createVobMeshGL(LoadedVob& vob)
 
     vob.meshVertexCount =
         verts.size();
+
+    g_vobMeshCache[vob.meshPath] = { vob.meshVao, vob.meshVbo, vob.meshVertexCount };
 
     // printf(
     //     "VOB MESH GL: %s -> %zu vertices (flat shading)\n",
