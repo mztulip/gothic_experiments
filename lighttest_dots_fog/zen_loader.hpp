@@ -45,23 +45,6 @@ static glm::mat4 zenRotationToGL(const zenkit::Mat3& r)
     return R;
 }
 
-static glm::mat4 zenRotationToGL_nomod(const zenkit::Mat3& r)
-{
-    glm::mat4 R(1.0f);
-
-    for (int row = 0; row < 3; ++row)
-    {
-        for (int col = 0; col < 3; ++col)
-        {
-            R[row][col] = r[row][col];
-        }
-    }
-
-    return R;
-}
-
-
-
 // ---------------------------------------------------------------------
 // Pomoce do budowy geometrii (podloga, kostka)
 // ---------------------------------------------------------------------
@@ -141,113 +124,196 @@ static bool loadVobMesh(
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// ZenGin -> OpenGL
+// -----------------------------------------------------------------------------
+//
+// Twoja konwencja:
+// ZenGin: X Y Z
+// OpenGL: -X Y Z
+//
+// C jest macierzą zmieniającą układ współrzędnych.
+// -----------------------------------------------------------------------------
+
+static glm::mat4 zenToGLBasis()
+{
+    glm::mat4 C(1.0f);
+
+    C[0][0] = -1.0f;
+
+    return C;
+}
+
+// -----------------------------------------------------------------------------
+// Budowanie lokalnej transformacji VOB-a w układzie ZenGin
+// -----------------------------------------------------------------------------
+
+static glm::mat4 makeZenLocalTransform(
+    const std::shared_ptr<zenkit::VirtualObject>& vob)
+{
+    glm::mat4 T(1.0f);
+
+    T[3] = glm::vec4(
+        vob->position.x,
+        vob->position.y,
+        vob->position.z,
+        1.0f
+    );
+
+    glm::mat4 R = zenRotationToGL(vob->rotation);
+
+    // Najpierw rotacja lokalna, potem przesunięcie.
+    //
+    // glm używa:
+    // worldPos = M * localPos
+    //
+    // więc:
+    // M = T * R
+    //
+    return T * R;
+}
+
+
+// -----------------------------------------------------------------------------
+// Konwersja całej macierzy ZenGin -> OpenGL
+// -----------------------------------------------------------------------------
+
+static glm::mat4 zenTransformToGL(const glm::mat4& zenTransform)
+{
+    glm::mat4 C = zenToGLBasis();
+
+    return C * zenTransform * C;
+}
 
 static void walkVobs(
     const std::shared_ptr<zenkit::VirtualObject>& vob,
-    std::vector<LoadedVob>& out, const glm::vec3& parentPos = glm::vec3(0.0f))
+    std::vector<LoadedVob>& out,
+    const glm::vec3& parentZenPos = glm::vec3(0.0f))
 {
-    // printf(
-    //     "VOB: %s\n"
-    //     "pos = %.2f %.2f %.2f\n"
-    //     "rotation:\n"
-    //     "%.4f %.4f %.4f\n"
-    //     "%.4f %.4f %.4f\n"
-    //     "%.4f %.4f %.4f\n",
-    //     vob->visual->name.c_str(),
-    //     vob->position.x,
-    //     vob->position.y,
-    //     vob->position.z,
+    // ------------------------------------------------------------
+    // POZYCJA
+    // ------------------------------------------------------------
+    //
+    // vob->position jest pozycją lokalną względem rodzica.
+    //
+    // Składamy pozycje w układzie ZenGin:
+    //
+    // parent + child
+    //
+    // Dopiero GOTOWĄ pozycję konwertujemy Zen -> GL.
+    // ------------------------------------------------------------
 
-    //     vob->rotation[0][0],
-    //     vob->rotation[0][1],
-    //     vob->rotation[0][2],
-
-    //     vob->rotation[1][0],
-    //     vob->rotation[1][1],
-    //     vob->rotation[1][2],
-
-    //     vob->rotation[2][0],
-    //     vob->rotation[2][1],
-    //     vob->rotation[2][2]
-    // );
-
-    glm::vec3 localPos = glm::vec3(
+    glm::vec3 localZenPos(
         vob->position.x,
         vob->position.y,
         vob->position.z
     );
 
-    glm::vec3 worldZenPos = parentPos + localPos;
+    glm::vec3 worldZenPos =
+        parentZenPos + localZenPos;
 
-    glm::vec3 worldPos = zenPosToGL(
-        worldZenPos.x,
-        worldZenPos.y,
-        worldZenPos.z
-    );
+    glm::vec3 worldGLPos =
+        zenPosToGL(
+            worldZenPos.x,
+            worldZenPos.y,
+            worldZenPos.z
+        );
+
+
+    // ------------------------------------------------------------
+    // VOB
+    // ------------------------------------------------------------
 
     if (vob->type != zenkit::VirtualObjectType::zCVobLight)
     {
+        LoadedVob obj;
 
-      LoadedVob obj;
+        obj.pos = worldGLPos;
 
-      obj.pos = worldPos;
-
-      // obj.rotation = zenRotationToGL(vob->rotation);
- 
-      obj.rotation = glm::mat4(1.f);
-
-      glm::vec3 bmin = zenPosToGL(
-          vob->bbox.min.x,
-          vob->bbox.min.y,
-          vob->bbox.min.z
-      );
-
-      glm::vec3 bmax = zenPosToGL(
-          vob->bbox.max.x,
-          vob->bbox.max.y,
-          vob->bbox.max.z
-      );
-
-      obj.bboxMin = glm::min(bmin, bmax);
-      obj.bboxMax = glm::max(bmin, bmax);
+        obj.rotation = zenRotationToGL(vob->rotation);
 
 
-      obj.type = vob->type;
-      obj.showVisual = vob->show_visual;
+        // --------------------------------------------------------
+        // BBOX
+        // --------------------------------------------------------
 
-      if (vob->visual)
-      {
-          obj.visualName = vob->visual->name;
+        glm::vec3 bmin = zenPosToGL(
+            vob->bbox.min.x,
+            vob->bbox.min.y,
+            vob->bbox.min.z
+        );
 
-          if (
-              vob->visual->type ==
-                  zenkit::VisualType::MESH ||
-              vob->visual->type ==
-                  zenkit::VisualType::MULTI_RESOLUTION_MESH
-          )
-          {
-              std::string gothicDir = getGothicDir();
+        glm::vec3 bmax = zenPosToGL(
+            vob->bbox.max.x,
+            vob->bbox.max.y,
+            vob->bbox.max.z
+        );
 
-              if (!gothicDir.empty())
-              {
-                  obj.meshPath =
-                      findMeshFile(
-                          gothicDir,
-                          obj.visualName
-                      );
+        obj.bboxMin = glm::min(bmin, bmax);
+        obj.bboxMax = glm::max(bmin, bmax);
 
-                  obj.meshLoaded =
-                      !obj.meshPath.empty();
-              }
-          }
-      }
 
-      out.push_back(obj);
+        // --------------------------------------------------------
+        // Pozostałe dane
+        // --------------------------------------------------------
+
+        obj.type = vob->type;
+        obj.showVisual = vob->show_visual;
+
+        if (vob->visual)
+        {
+            obj.visualName =
+                vob->visual->name;
+
+            if (
+                vob->visual->type ==
+                    zenkit::VisualType::MESH ||
+                vob->visual->type ==
+                    zenkit::VisualType::MULTI_RESOLUTION_MESH
+            )
+            {
+                std::string gothicDir =
+                    getGothicDir();
+
+                if (!gothicDir.empty())
+                {
+                    obj.meshPath =
+                        findMeshFile(
+                            gothicDir,
+                            obj.visualName
+                        );
+
+                    obj.meshLoaded =
+                        !obj.meshPath.empty();
+                }
+            }
+        }
+
+        out.push_back(obj);
     }
 
-    for (auto& c : vob->children)
-        walkVobs(c, out, worldZenPos);
+
+    // ------------------------------------------------------------
+    // DZIECI
+    // ------------------------------------------------------------
+    //
+    // KLUCZOWE:
+    //
+    // dziecko dostaje GLOBALNĄ pozycję rodzica w ZenGin.
+    //
+    // Nie konwertujemy jej tutaj na GL.
+    // ------------------------------------------------------------
+
+    for (auto& child : vob->children)
+    {
+        walkVobs(
+            child,
+            out,
+            worldZenPos
+        );
+    }
 }
+
 
 static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
 {
