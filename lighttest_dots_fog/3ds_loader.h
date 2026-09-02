@@ -360,47 +360,26 @@ private:
                 case 0x4120: // FACE_ARRAY
                 {
                     uint16_t numFaces;
-
-                    file.read(
-                        reinterpret_cast<char*>(&numFaces),
-                        sizeof(numFaces)
-                    );
+                    file.read(reinterpret_cast<char*>(&numFaces), sizeof(numFaces));
 
                     mesh.faces.resize(numFaces);
+                    mesh.materialForFace.resize(numFaces, 0);
 
-                    mesh.materialForFace.resize(
-                        numFaces,
-                        0
+                    // Kazdy face w pliku to 4x uint16 (a,b,c,flags) = 8 bajtow.
+                    // Czytamy WSZYSTKIE naraz jednym wywolaniem zamiast 4x na kazdy face.
+                    std::vector<uint16_t> raw(size_t(numFaces) * 4);
+                    file.read(
+                        reinterpret_cast<char*>(raw.data()),
+                        raw.size() * sizeof(uint16_t)
                     );
 
                     for (uint16_t i = 0; i < numFaces; ++i)
                     {
-                        file.read(
-                            reinterpret_cast<char*>(&mesh.faces[i].a),
-                            sizeof(uint16_t)
-                        );
-
-                        file.read(
-                            reinterpret_cast<char*>(&mesh.faces[i].b),
-                            sizeof(uint16_t)
-                        );
-
-                        file.read(
-                            reinterpret_cast<char*>(&mesh.faces[i].c),
-                            sizeof(uint16_t)
-                        );
-
-                        uint16_t flags;
-
-                        file.read(
-                            reinterpret_cast<char*>(&flags),
-                            sizeof(uint16_t)
-                        );
+                        mesh.faces[i].a = raw[i * 4 + 0];
+                        mesh.faces[i].b = raw[i * 4 + 1];
+                        mesh.faces[i].c = raw[i * 4 + 2];
+                        // raw[i*4+3] to flagi widocznosci krawedzi - pomijamy, tak jak wczesniej
                     }
-
-                    // UWAGA:
-                    // tutaj nie czytamy jeszcze smoothing groups.
-                    // Po FACE_ARRAY będą kolejne podchunki, m.in. 0x4150.
 
                     parseChunk(
                         file,

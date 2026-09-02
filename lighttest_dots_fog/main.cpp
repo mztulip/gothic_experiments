@@ -719,15 +719,29 @@ int main(int argc, char** argv)
 
   if (worldMode)
   {
+      auto tMeshStart = std::chrono::high_resolution_clock::now();
+      size_t done = 0;
+
       for (auto& vob : worldVobs)
       {
           if (vob.meshLoaded)
           {
               createVobMeshGL(vob);
           }
+          ++done;
+          if (done % 2000 == 0)
+          {
+              printf("[VOB MESH] %zu / %zu (unikalnych GPU meshy: %zu)\n",
+                    done, worldVobs.size(), g_vobMeshCache.size());
+          }
       }
-  }
 
+      auto tMeshEnd = std::chrono::high_resolution_clock::now();
+      printf("[LOG] Zaladowano meshe VOB-ow: %.2f ms (unikalnych: %zu)\n",
+            std::chrono::duration<float, std::milli>(tMeshEnd - tMeshStart).count(),
+            g_vobMeshCache.size());
+  }
+  
   GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
   std::string fragFullSrc = buildFragSource(FRAG_SRC);
   GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());
