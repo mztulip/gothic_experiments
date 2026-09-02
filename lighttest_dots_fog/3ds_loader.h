@@ -216,10 +216,10 @@ private:
 
                         mesh.materials[currentMaterial].name = materialName;
 
-                        printf(
-                            "3DS MATERIAL NAME: '%s'\n",
-                            materialName.c_str()
-                        );
+                        // printf(
+                        //     "3DS MATERIAL NAME: '%s'\n",
+                        //     materialName.c_str()
+                        // );
                     }
 
                     file.seekg(nextChunk, std::ios::beg);
@@ -232,7 +232,7 @@ private:
                     break;
                 case 0xAFFF: // MATERIAL_BLOCK
                 {
-                    printf("3DS MATERIAL CHUNK\n");
+                    // printf("3DS MATERIAL CHUNK\n");
 
                     int materialIndex = createMaterial(mesh);
 
@@ -248,7 +248,7 @@ private:
 
                 case 0xA200: // MAT_TEXMAP
                 {
-                    printf("3DS TEXTURE MAP CHUNK\n");
+                    // printf("3DS TEXTURE MAP CHUNK\n");
 
                     parseChunk(
                         file,
@@ -280,11 +280,11 @@ private:
                         mesh.materials[currentMaterial].textureFile =
                             textureName;
 
-                        printf(
-                            "3DS TEXTURE FOUND: material=%d '%s'\n",
-                            currentMaterial,
-                            textureName.c_str()
-                        );
+                        // printf(
+                        //     "3DS TEXTURE FOUND: material=%d '%s'\n",
+                        //     currentMaterial,
+                        //     textureName.c_str()
+                        // );
                     }
 
                     file.seekg(nextChunk, std::ios::beg);
@@ -324,12 +324,12 @@ private:
                     int materialIndex =
                         findMaterial(mesh, materialName);
 
-                    printf(
-                        "3DS FACE MATERIAL: '%s' -> material=%d, faces=%u\n",
-                        materialName.c_str(),
-                        materialIndex,
-                        faceCount
-                    );
+                    // printf(
+                    //     "3DS FACE MATERIAL: '%s' -> material=%d, faces=%u\n",
+                    //     materialName.c_str(),
+                    //     materialIndex,
+                    //     faceCount
+                    // );
 
                     if (materialIndex >= 0)
                     {
@@ -457,15 +457,15 @@ private:
 
                     mesh.hasLocalTransform = true;
 
-                    printf(
-                        "3DS LOCAL MATRIX:\n"
-                        "[ %.4f %.4f %.4f | %.4f ]\n"
-                        "[ %.4f %.4f %.4f | %.4f ]\n"
-                        "[ %.4f %.4f %.4f | %.4f ]\n",
-                        m[0], m[3], m[6], m[9],
-                        m[1], m[4], m[7], m[10],
-                        m[2], m[5], m[8], m[11]
-                    );
+                    // printf(
+                    //     "3DS LOCAL MATRIX:\n"
+                    //     "[ %.4f %.4f %.4f | %.4f ]\n"
+                    //     "[ %.4f %.4f %.4f | %.4f ]\n"
+                    //     "[ %.4f %.4f %.4f | %.4f ]\n",
+                    //     m[0], m[3], m[6], m[9],
+                    //     m[1], m[4], m[7], m[10],
+                    //     m[2], m[5], m[8], m[11]
+                    // );
 
                     break;
                 }

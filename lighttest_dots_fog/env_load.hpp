@@ -8,11 +8,11 @@ static std::string getGothicDir()
 
     if (!env)
     {
-        printf("GOTHIC2_DIR: NIE USTAWIONA\n");
+        // printf("GOTHIC2_DIR: NIE USTAWIONA\n");
         return {};
     }
 
-    printf("GOTHIC2_DIR RAW: %s\n", env);
+    // printf("GOTHIC2_DIR RAW: %s\n", env);
 
     std::string path(env);
 
@@ -22,7 +22,7 @@ static std::string getGothicDir()
         path.end()
     );
 
-    printf("GOTHIC2_DIR: %s\n", path.c_str());
+    // printf("GOTHIC2_DIR: %s\n", path.c_str());
 
     return path;
 }
@@ -40,15 +40,11 @@ static std::string findMeshFile(
     fs::path meshesDir =
     fs::path(gothicDir) / "_Work" / "Data" / "Meshes";
 
-    printf("SZUKAM MESHY W: %s\n", meshesDir.string().c_str());
-
     if (!fs::exists(meshesDir))
     {
-        printf("KATALOG MESHES NIE ISTNIEJE!\n");
+      
         return {};
     }
-
-    printf("KATALOG MESHES ISTNIEJE.\n");
 
 
     std::string wanted = visualName;

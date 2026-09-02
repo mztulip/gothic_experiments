@@ -500,11 +500,11 @@ static bool createVobMeshGL(LoadedVob& vob)
     vob.meshVertexCount =
         verts.size();
 
-    printf(
-        "VOB MESH GL: %s -> %zu vertices (flat shading)\n",
-        vob.visualName.c_str(),
-        vob.meshVertexCount
-    );
+    // printf(
+    //     "VOB MESH GL: %s -> %zu vertices (flat shading)\n",
+    //     vob.visualName.c_str(),
+    //     vob.meshVertexCount
+    // );
 
     return true;
 }

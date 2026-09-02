@@ -259,12 +259,6 @@ static void walkVobs(
             obj.visualName =
                 vob->visual->name;
 
-            if (vob->visual && vob->visual->name.find("NW_CITY_MAP_WAR_OPEN_01") != std::string::npos) 
-            {
-              printf("MAPA: local pos=(%.2f,%.2f,%.2f) parentZenPos=(%.2f,%.2f,%.2f)\n",
-                    vob->position.x, vob->position.y, vob->position.z,
-                    parentZenPos.x, parentZenPos.y, parentZenPos.z);
-          }
 
             if (
                 vob->visual->type ==
@@ -329,7 +323,7 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
 
         for (auto& vob : world.world_vobs)
         {
-            debugPrintVob(vob, 0);
+            // debugPrintVob(vob, 0);
             walkVobs(vob, out);
         }
     }
