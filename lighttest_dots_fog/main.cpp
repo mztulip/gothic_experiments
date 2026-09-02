@@ -527,63 +527,6 @@ static glm::mat4 getVobBaseRotation()
 }
 
 
-static void drawVobVisuals(
-    const std::vector<LoadedVob>& vobs,
-    GLuint prog)
-{
-    GLint locModel =
-        glGetUniformLocation(prog, "uModel");
-
-    GLint locAlbedo =
-        glGetUniformLocation(prog, "uAlbedo");
-
-    GLint locIsMarker =
-        glGetUniformLocation(prog, "uIsMarker");
-
-    for (const auto& obj : vobs)
-    {
-        if (!obj.meshLoaded)
-            continue;
-
-    glm::mat4 model =
-        glm::translate(glm::mat4(1.f), obj.pos)
-        * obj.rotation
-        * getVobBaseRotation();
-
-
-
-        glUniformMatrix4fv(
-            locModel,
-            1,
-            GL_FALSE,
-            glm::value_ptr(model)
-        );
-
-        glm::vec3 color =
-            vobTypeColor(obj.type);
-
-        glUniform3fv(
-            locAlbedo,
-            1,
-            glm::value_ptr(color)
-        );
-
-
-        glUniform1i(locIsMarker, 0);
-
-        glBindVertexArray(obj.meshVao);
-
-        glDrawArrays(
-            GL_TRIANGLES,
-            0,
-            static_cast<GLsizei>(
-                obj.meshVertexCount
-            )
-        );
-    }
-
-    glBindVertexArray(0);
-}
 
 static void drawImGuiControls(GLFWwindow* win, bool worldMode)
 {
@@ -646,6 +589,34 @@ static void drawImGuiControls(GLFWwindow* win, bool worldMode)
     }
 
     ImGui::End();
+}
+
+static void drawVobsToGBuffer(
+    const std::vector<LoadedVob>& vobs,
+    GLuint geomProg,
+    GLint locModel,
+    GLint locHasTex,
+    GLint locAlbedo)
+{
+    for (const auto& obj : vobs)
+    {
+        if (!obj.meshLoaded)
+            continue;
+
+        glm::mat4 model =
+            glm::translate(glm::mat4(1.f), obj.pos)
+            * obj.rotation
+            * getVobBaseRotation();
+
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
+
+        // Na razie VOB-y nie maja przypisanych tekstur, wiec albedo = kolor typu
+        glUniform1i(locHasTex, 0);
+        glUniform3fv(locAlbedo, 1, glm::value_ptr(vobTypeColor(obj.type)));
+
+        glBindVertexArray(obj.meshVao);
+        glDrawArrays(GL_TRIANGLES, 0, GLsizei(obj.meshVertexCount));
+    }
 }
 
 int main(int argc, char** argv)
@@ -998,6 +969,9 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         glBindVertexArray(sm.vao);
         glDrawArrays(GL_TRIANGLES, 0, GLsizei(sm.vertexCount));
     }
+
+    drawVobsToGBuffer(worldVobs, geomProg, glGetUniformLocation(geomProg, "uModel"), locHasTex, locAlbedo);
+
     glBindVertexArray(0);
 
     // skopiuj glebie do domyslnego framebuffera, zeby markery/mgla mialy poprawny depth test
@@ -1249,35 +1223,6 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         }
     }
 
-
-    // --- Ambient pass dla VOB-ow ---
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LESS);
-    glUniform1i(glGetUniformLocation(prog, "uAmbientOnly"), 1);
-    drawVobVisuals(worldVobs, prog);
-
-    // --- Addytywny pass per-swiatlo dla VOB-ow ---
-    glUniform1i(glGetUniformLocation(prog, "uAmbientOnly"), 0);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
-
-    for(size_t i : visibleLightIndices) {
-        const auto& l = worldLights[i];
-        float range = effectiveLightRange(l);
-
-        glUniform3fv(glGetUniformLocation(prog, "uLightPos"),   1, glm::value_ptr(l.pos));
-        glUniform3fv(glGetUniformLocation(prog, "uLightColor"), 1, glm::value_ptr(l.color));
-        glUniform1f (glGetUniformLocation(prog, "uRange"), range);
-
-        drawVobVisuals(worldVobs, prog);
-    }
-
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LESS);
 
     drawVobMarkers(
         worldVobs,
