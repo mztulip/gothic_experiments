@@ -267,30 +267,40 @@ static float g_lightHeightOffset = 0.5f;  // Wysokość ponad najwyższy punkt o
 static CameraMode g_cameraMode = CAMERA_ORBIT;
 static glm::vec3 g_fpsCameraPos = glm::vec3(0.0f, 100.0f, 200.0f);
 static float g_flySpeed = 500.0f; // Domyślna prędkość latania
+static bool g_toggleCameraRequested = false;
 
-static void switchCameraMode(CameraMode newMode, const glm::vec3& currentRotatedCenter)
+void switchCameraMode(CameraMode newMode, const glm::vec3& rotatedCenter)
 {
     if (g_cameraMode == newMode) return;
 
+    float radYaw = glm::radians(g_yaw);
+    float radPitch = glm::radians(g_pitch);
+
     if (newMode == CAMERA_FPS)
     {
-        // Wyznacz pozycję kamery w miejscu, gdzie znajdowało się oko w trybie Orbit
-        float radYaw = glm::radians(g_yaw);
-        float radPitch = glm::radians(g_pitch);
+        // 1. Obliczamy aktualną pozycję kamery z trybu Orbit
+        g_fpsCameraPos.x = rotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
+        g_fpsCameraPos.y = rotatedCenter.y + g_distance * sin(radPitch);
+        g_fpsCameraPos.z = rotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
 
-        g_fpsCameraPos.x = currentRotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
-        g_fpsCameraPos.y = currentRotatedCenter.y + g_distance * sin(radPitch);
-        g_fpsCameraPos.z = currentRotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
+        // 2. Obliczamy kierunek od kamery do środka obiektu
+        glm::vec3 dir = glm::normalize(rotatedCenter - g_fpsCameraPos);
 
-        // Odwróć kąt patrzenia, by patrzeć w stronę środka obiektu
-        g_yaw += 180.0f;
-        g_pitch = -g_pitch;
+        // 3. Przeliczamy g_yaw i g_pitch tak, aby kamera FPS patrzyła na obiekt
+        g_pitch = glm::degrees(asin(dir.y));
+        g_yaw   = glm::degrees(atan2(dir.x, dir.z));
     }
-    else
+    else // Odwrót: przesiadka z FPS na Orbit
     {
-        // Powrót do trybu Orbit
-        g_yaw -= 180.0f;
-        g_pitch = -g_pitch;
+        // Ustawiamy dystans jako odległość od środka obiektu
+        g_distance = glm::distance(g_fpsCameraPos, rotatedCenter);
+        g_distance = std::clamp(g_distance, 1.0f, 500000.0f);
+
+        // Obliczamy wektor od środka obiektu do kamery
+        glm::vec3 dir = glm::normalize(g_fpsCameraPos - rotatedCenter);
+
+        g_pitch = glm::degrees(asin(dir.y));
+        g_yaw   = glm::degrees(atan2(dir.x, dir.z));
     }
 
     g_cameraMode = newMode;
@@ -327,9 +337,20 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
         float dx = static_cast<float>(xpos - g_lastMouseX);
         float dy = static_cast<float>(ypos - g_lastMouseY);
 
-        float sensitivity = 0.3f;
-        g_yaw += dx * sensitivity;
-        g_pitch -= dy * sensitivity;
+        float sensitivity = 0.2f;
+
+        if (g_cameraMode == CAMERA_ORBIT)
+        {
+            g_yaw += dx * sensitivity;
+            g_pitch -= dy * sensitivity;
+        }
+        else // CAMERA_FPS
+        {
+            g_yaw += dx * sensitivity;
+            g_pitch += dy * sensitivity; // Zmiana na '+' dla naturalnej osi Y w FPS
+        }
+
+        g_pitch = std::clamp(g_pitch, -89.0f, 89.0f);
 
         g_lastMouseX = xpos;
         g_lastMouseY = ypos;
@@ -358,8 +379,8 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 
 static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureKeyboard) return;
+    // ImGuiIO& io = ImGui::GetIO();
+    // if (io.WantCaptureKeyboard) return;
 
     if (key >= 0 && key < 512)
     {
@@ -400,7 +421,7 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
 
         if (key == GLFW_KEY_C)
         {
-            g_cameraMode = (g_cameraMode == CAMERA_ORBIT) ? CAMERA_FPS : CAMERA_ORBIT;
+            g_toggleCameraRequested = true;
         }
     }
 }
@@ -677,6 +698,7 @@ int main(int argc, char** argv)
 
             glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
             glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
+            
             g_fpsCameraPos = rotatedCenter + glm::vec3(0.0f, mesh.maxDimension * 0.2f, g_distance);
 
             if (activeTex.id != fallbackTex.id)
@@ -744,6 +766,15 @@ int main(int argc, char** argv)
         glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
         glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
 
+        // Reakcja na klawisz C z keyCallback
+        if (g_toggleCameraRequested)
+        {
+            std::cout << "[LOG] Zmiana trybu kamery..." << std::endl;
+            CameraMode nextMode = (g_cameraMode == CAMERA_ORBIT) ? CAMERA_FPS : CAMERA_ORBIT;
+            switchCameraMode(nextMode, rotatedCenter);
+            g_toggleCameraRequested = false;
+        }
+
         glm::vec3 camPos;
         glm::vec3 camFront;
         glm::vec3 camUp = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -799,7 +830,7 @@ int main(int argc, char** argv)
                 if (g_keys[GLFW_KEY_A]) g_fpsCameraPos -= camRight * speed;
                 if (g_keys[GLFW_KEY_D]) g_fpsCameraPos += camRight * speed;
                 if (g_keys[GLFW_KEY_E] || g_keys[GLFW_KEY_SPACE]) g_fpsCameraPos += camUp * speed;
-                if (g_keys[GLFW_KEY_Q]) g_fpsCameraPos -= camUp * speed;
+                if (g_keys[GLFW_KEY_R]) g_fpsCameraPos -= camUp * speed;
             }
 
             camPos = g_fpsCameraPos;
@@ -905,18 +936,17 @@ int main(int argc, char** argv)
                 ImGui::Separator();
                 ImGui::Text("ESC / Q: Wyjscie");
                 ImGui::Text("Gora / Dol / N / P: Zmiana pliku");
-                ImGui::Text("LPM / A / D: Obrot kamery");
-                ImGui::Text("Rolka / W / S: Zoom");
+
                 ImGui::Text("C: Zmiana trybu kamery");
                 if (g_cameraMode == CAMERA_ORBIT)
                 {
-                    ImGui::Text("LPM: Obrot | Rolka: Zoom");
+                    ImGui::Text("LPM / A / D: Obrot | Rolka/ W /S: Zoom");
                 }
                 else
                 {
                     ImGui::Text("LPM: Rozgladanie sie");
                     ImGui::Text("WASD: Przod/Lewo/Tyl/Prawo");
-                    ImGui::Text("E / Q: Gora / Dol");
+                    ImGui::Text("E / R: Gora / Dol");
                     ImGui::Text("Shift: Szybki ruch");
                 }
             }
