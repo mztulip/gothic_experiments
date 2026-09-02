@@ -339,10 +339,10 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
         return {};
     }
 
-    printf(
-        "Wczytano %zu obiektow VOB do debugowania\n",
-        out.size()
-    );
+    // printf(
+    //     "Wczytano %zu obiektow VOB do debugowania\n",
+    //     out.size()
+    // );
 
     return out;
 }

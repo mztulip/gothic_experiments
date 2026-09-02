@@ -390,15 +390,15 @@ public:
 
         tex.valid = true;
 
-        std::cout
-            << "  -> SUCCESS: Wczytano "
-            << requestedFilename
-            << " ("
-            << tex.width
-            << "x"
-            << tex.height
-            << ")"
-            << std::endl;
+        // std::cout
+        //     << "  -> SUCCESS: Wczytano "
+        //     << requestedFilename
+        //     << " ("
+        //     << tex.width
+        //     << "x"
+        //     << tex.height
+        //     << ")"
+        //     << std::endl;
 
         return tex;
     }

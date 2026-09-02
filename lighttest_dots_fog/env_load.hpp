@@ -1,6 +1,12 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
+#include <filesystem>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+
 
 static std::string getGothicDir()
 {
@@ -27,6 +33,53 @@ static std::string getGothicDir()
     return path;
 }
 
+static std::string toLowerStr(const std::string& s)
+{
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+// Indeks budowany RAZ, przy pierwszym wywolaniu (lazy init).
+// klucz = nazwa pliku (lowercase), wartosc = pelna sciezka
+static std::unordered_map<std::string, std::string>& meshFileIndex(const std::string& gothicDir)
+{
+    static std::unordered_map<std::string, std::string> index;
+    static bool built = false;
+
+    if (!built)
+    {
+        built = true;
+
+        namespace fs = std::filesystem;
+        fs::path meshesDir = fs::path(gothicDir) / "_Work" / "Data" / "Meshes";
+
+        if (fs::exists(meshesDir))
+        {
+            try
+            {
+                for (const auto& entry : fs::recursive_directory_iterator(meshesDir))
+                {
+                    if (!entry.is_regular_file())
+                        continue;
+
+                    std::string filename = toLowerStr(entry.path().filename().string());
+                    index[filename] = entry.path().string();
+                }
+
+                printf("[MESH INDEX] Zindeksowano %zu plikow z %s\n",
+                       index.size(), meshesDir.string().c_str());
+            }
+            catch (const std::exception& e)
+            {
+                fprintf(stderr, "Blad podczas indeksowania meshy: %s\n", e.what());
+            }
+        }
+    }
+
+    return index;
+}
 
 static std::string findMeshFile(
     const std::string& gothicDir,
@@ -35,59 +88,13 @@ static std::string findMeshFile(
     if (visualName.empty())
         return {};
 
-    namespace fs = std::filesystem;
+    auto& index = meshFileIndex(gothicDir);
 
-    fs::path meshesDir =
-    fs::path(gothicDir) / "_Work" / "Data" / "Meshes";
+    std::string wanted = toLowerStr(visualName);
 
-    if (!fs::exists(meshesDir))
-    {
-      
-        return {};
-    }
-
-
-    std::string wanted = visualName;
-
-    std::transform(
-        wanted.begin(),
-        wanted.end(),
-        wanted.begin(),
-        [](unsigned char c)
-        {
-            return static_cast<char>(std::tolower(c));
-        });
-
-    try
-    {
-        for (const auto& entry :
-             fs::recursive_directory_iterator(meshesDir))
-        {
-            if (!entry.is_regular_file())
-                continue;
-
-            std::string filename =
-                entry.path().filename().string();
-
-            std::transform(
-                filename.begin(),
-                filename.end(),
-                filename.begin(),
-                [](unsigned char c)
-                {
-                    return static_cast<char>(std::tolower(c));
-                });
-
-            if (filename == wanted)
-                return entry.path().string();
-        }
-    }
-    catch (const std::exception& e)
-    {
-        fprintf(stderr,
-                "Blad podczas szukania mesha: %s\n",
-                e.what());
-    }
+    auto it = index.find(wanted);
+    if (it != index.end())
+        return it->second;
 
     return {};
 }
