@@ -29,19 +29,12 @@ static inline glm::vec3 zenPosToGL(float x, float y, float z)
   return glm::vec3(-x, y, z);
 }
 
-
 static glm::mat4 zenRotationToGL(const zenkit::Mat3& r)
 {
     glm::mat4 R(1.0f);
-
     for (int row = 0; row < 3; ++row)
-    {
         for (int col = 0; col < 3; ++col)
-        {
-            R[col][row] = r[row][col];
-        }
-    }
-
+            R[row][col] = r[row][col];   // <-- bez zamiany indeksów
     return R;
 }
 
@@ -230,8 +223,9 @@ static void walkVobs(
 
         obj.pos = worldGLPos;
 
-        obj.rotation = zenRotationToGL(vob->rotation);
-
+        glm::mat4 R = zenRotationToGL(vob->rotation);
+        glm::mat4 C = zenToGLBasis();
+        obj.rotation = C * R * C;
 
         // --------------------------------------------------------
         // BBOX
@@ -264,6 +258,13 @@ static void walkVobs(
         {
             obj.visualName =
                 vob->visual->name;
+
+            if (vob->visual && vob->visual->name.find("NW_CITY_MAP_WAR_OPEN_01") != std::string::npos) 
+            {
+              printf("MAPA: local pos=(%.2f,%.2f,%.2f) parentZenPos=(%.2f,%.2f,%.2f)\n",
+                    vob->position.x, vob->position.y, vob->position.z,
+                    parentZenPos.x, parentZenPos.y, parentZenPos.z);
+          }
 
             if (
                 vob->visual->type ==
