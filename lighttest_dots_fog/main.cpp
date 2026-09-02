@@ -354,11 +354,20 @@ static bool createVobMeshGL(LoadedVob& vob)
     auto cacheIt = g_vobMeshCache.find(vob.meshPath);
     if (cacheIt != g_vobMeshCache.end())
     {
+        if (cacheIt->second.vao == 0)
+        {
+            vob.meshLoaded = false;
+            return false;
+        }
+
         vob.meshVao         = cacheIt->second.vao;
         vob.meshVbo          = cacheIt->second.vbo;
         vob.meshVertexCount = cacheIt->second.vertexCount;
         return true;
     }
+
+    printf("[LOAD 3DS] Parsowanie: %s (VOB: %s)\n", vob.meshPath.c_str(), vob.visualName.c_str());
+    fflush(stdout); // Wymuś natychmiastowe wypisanie w terminalu
 
     Mesh3DS mesh;
 
@@ -720,28 +729,52 @@ int main(int argc, char** argv)
   if (worldMode)
   {
       auto tMeshStart = std::chrono::high_resolution_clock::now();
-      size_t done = 0;
-
+      
+      // 1. Zbierz tylko unikalne ścieżki do meshy
+      std::unordered_map<std::string, std::vector<LoadedVob*>> uniqueMeshes;
       for (auto& vob : worldVobs)
       {
-          if (vob.meshLoaded)
+          if (vob.meshLoaded && !vob.meshPath.empty())
           {
-              createVobMeshGL(vob);
+              uniqueMeshes[vob.meshPath].push_back(&vob);
           }
-          ++done;
-          if (done % 2000 == 0)
+      }
+
+      printf("[VOB MESH] Znaleziono %zu unikalnych plików .3DS dla %zu VOB-ów. Ładowanie...\n", 
+            uniqueMeshes.size(), worldVobs.size());
+
+      // 2. Ładuj tylko UNIKALNE pliki z dysku i do GPU
+      size_t loadedCount = 0;
+      for (auto& [meshPath, vobList] : uniqueMeshes)
+      {
+          ++loadedCount;
+          if (loadedCount % 50 == 0 || loadedCount == uniqueMeshes.size())
           {
-              printf("[VOB MESH] %zu / %zu (unikalnych GPU meshy: %zu)\n",
-                    done, worldVobs.size(), g_vobMeshCache.size());
+              printf("[VOB MESH] Postęp unikalnych: %zu / %zu\n", loadedCount, uniqueMeshes.size());
+              fflush(stdout);
+          }
+
+          // Pierwszy VOB z listy posłuży do załadowania siatki do cache
+          LoadedVob* firstVob = vobList[0];
+          if (createVobMeshGL(*firstVob))
+          {
+              // Przypisz załadowany VAO/VBO wszystkim pozostałym VOB-om używającym tego samego pliku
+              for (size_t i = 1; i < vobList.size(); ++i)
+              {
+                  vobList[i]->meshVao = firstVob->meshVao;
+                  vobList[i]->meshVbo = firstVob->meshVbo;
+                  vobList[i]->meshVertexCount = firstVob->meshVertexCount;
+                  vobList[i]->meshLocalTransform = firstVob->meshLocalTransform;
+              }
           }
       }
 
       auto tMeshEnd = std::chrono::high_resolution_clock::now();
-      printf("[LOG] Zaladowano meshe VOB-ow: %.2f ms (unikalnych: %zu)\n",
+      printf("[LOG] Załadowano meshe VOB-ów w: %.2f ms (unikalnych w pamięci: %zu)\n",
             std::chrono::duration<float, std::milli>(tMeshEnd - tMeshStart).count(),
             g_vobMeshCache.size());
   }
-  
+
   GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
   std::string fragFullSrc = buildFragSource(FRAG_SRC);
   GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());

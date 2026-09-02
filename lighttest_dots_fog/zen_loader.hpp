@@ -511,7 +511,6 @@ static std::vector<LoadedLight> loadLightsFromZen(const std::string& path)
     glm::vec3 fallbackColor{0.6f, 0.6f, 0.62f};
 };
 
-// Nowa funkcja ładowania świata podzielona na podsiatki (SubMeshes)
 static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, TextureCache& texCache)
 {
     std::vector<SubMesh> submeshes;
@@ -533,24 +532,23 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
             return {};
         }
 
-
-        // Grupowanie wierzchołków po indeksie materiału
         std::unordered_map<uint32_t, std::vector<Vertex>> groupedVerts;
+
+        // wstępna rezerwacja pamięci
+        size_t polyCount = vidx.size() / 3;
+        for (uint32_t m = 0; m < mesh.materials.size(); ++m) {
+            groupedVerts[m].reserve(polyCount / (mesh.materials.empty() ? 1 : mesh.materials.size()) * 3);
+        }
 
         for (size_t i = 0; i + 2 < vidx.size(); i += 3)
         {
             size_t polyIdx = i / 3;
             uint32_t matIdx = midx[polyIdx];
 
-
             if (vidx[i + 0] >= mesh.vertices.size() ||
                 vidx[i + 1] >= mesh.vertices.size() ||
-                vidx[i + 2] >= mesh.vertices.size())
-            {
-                continue;
-            }
-
-            if (fidx[i + 0] >= mesh.features.size() ||
+                vidx[i + 2] >= mesh.vertices.size() ||
+                fidx[i + 0] >= mesh.features.size() ||
                 fidx[i + 1] >= mesh.features.size() ||
                 fidx[i + 2] >= mesh.features.size())
             {
@@ -558,39 +556,31 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
             }
 
             auto pushVertex = [&](size_t idx) {
-              if (vidx[idx] >= mesh.vertices.size())
-                  return;
-
-              if (fidx[idx] >= mesh.features.size())
-                  return;
-
                 const auto& p = mesh.vertices[vidx[idx]];
                 const auto& n = mesh.features[fidx[idx]].normal;
                 const auto& uv = mesh.features[fidx[idx]].texture;
 
                 glm::vec3 pos = zenPosToGL(p.x, p.y, p.z);
                 glm::vec3 nrm = zenPosToGL(n.x, n.y, n.z);
-                // Gothic ma odwróconą oś V w UV względem OpenGL
                 glm::vec2 texcoord = glm::vec2(uv.x, 1.0f - uv.y); 
 
                 groupedVerts[matIdx].push_back({pos, nrm, texcoord});
             };
 
-            // Odwrócenie nawijania trójkąta z uwagi na zenPosToGL
             pushVertex(i + 0);
             pushVertex(i + 2);
             pushVertex(i + 1);
         }
 
-        // Tworzenie VAO/VBO i ładowanie tekstur dla każdej grupy
         for (auto& [matIdx, verts] : groupedVerts)
         {
+            if (verts.empty()) continue;
+
             SubMesh sm;
             sm.vertexCount = verts.size();
 
             if (matIdx < mesh.materials.size()) 
             {
-
                 const auto& mat = mesh.materials[matIdx];
                 sm.fallbackColor = glm::vec3(mat.color.r / 255.f, mat.color.g / 255.f, mat.color.b / 255.f);
 
@@ -599,7 +589,6 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
                 }
             }
 
-            // Tworzenie bufora OpenGL z uwzględnieniem attrib 2 (UV)
             glGenVertexArrays(1, &sm.vao);
             glGenBuffers(1, &sm.vbo);
             glBindVertexArray(sm.vao);
@@ -624,4 +613,3 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
 
     return submeshes;
 }
-
