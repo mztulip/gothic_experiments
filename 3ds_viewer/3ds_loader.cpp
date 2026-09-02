@@ -252,6 +252,8 @@ static std::vector<std::string> g_fileList;
 static size_t g_currentFileIdx = 0;
 static bool g_needMeshReload = false;
 static bool g_scrollToSelected = false;
+static bool g_enableAlphaTest = true; // Flaga włączania przezroczystości
+static bool g_showAlphaBounds = false;  // Podświetlanie struktury płacht
 
 static RenderMode g_renderMode = RENDER_TEXTURED;
 static bool g_showHUD = true;
@@ -379,7 +381,7 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 
 static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    // ImGuiIO& io = ImGui::GetIO();
+    ImGuiIO& io = ImGui::GetIO();
     // if (io.WantCaptureKeyboard) return;
 
     if (key >= 0 && key < 512)
@@ -422,6 +424,11 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
         if (key == GLFW_KEY_C)
         {
             g_toggleCameraRequested = true;
+        }
+
+        if (key == GLFW_KEY_O)
+        {
+            g_enableAlphaTest = !g_enableAlphaTest;
         }
     }
 }
@@ -495,7 +502,8 @@ out vec3 FragPos;
 uniform mat4 MVP;
 uniform mat4 Model;
 
-void main() {
+void main() 
+{
     gl_Position = MVP * vec4(aPos, 1.0);
     TexCoord = aTexCoord;
     FragNormal = mat3(transpose(inverse(Model))) * aNormal;
@@ -514,22 +522,46 @@ in vec3 FragPos;
 uniform sampler2D uTexture;
 uniform int uRenderMode; // 0: Texture, 1: Solid Color, 2: Wireframe
 uniform bool uEnableLighting;
+uniform bool uEnableAlphaTest; // Przezroczystość
+uniform bool uShowAlphaBounds; // Pokazanie niewidocznej struktury płacht
 uniform vec3 uLightPos;
-uniform float uLightIntensity;   // Moc światła kierunkowego
-uniform float uAmbientIntensity; // Regulowana moc światła otoczenia (cienie)
+uniform float uLightIntensity;   
+uniform float uAmbientIntensity; 
 
-void main() {
+void main() 
+{
     vec4 baseColor;
 
-    if (uRenderMode == 0) {
+    if (uRenderMode == 0) 
+    {
         baseColor = texture(uTexture, TexCoord);
-    } else if (uRenderMode == 1) {
+        
+        if (uEnableAlphaTest) 
+        {
+            // Normalny tryb przezroczystości (odrzucamy czarne tło)
+            if (baseColor.a < 0.1) 
+            {
+                discard;
+            }
+        } 
+        else if (uShowAlphaBounds && baseColor.a < 0.1) 
+        {
+            // TRYB STRUKTURY: podświetlamy tło płachty
+            // TRYB STRUKTURA: Neonowa magenta/róż
+            baseColor = vec4(1.0, 0.0, 0.6, 1.0);
+        }
+    } 
+    else if (uRenderMode == 1) 
+    {
         baseColor = vec4(0.7, 0.7, 0.75, 1.0);
-    } else {
+    } 
+    else 
+    {
         baseColor = vec4(0.0, 0.8, 1.0, 1.0);
     }
 
-    if (uEnableLighting && uRenderMode != 2) {
+    if (uEnableLighting && uRenderMode != 2) 
+    {
         vec3 norm = normalize(FragNormal);
         vec3 lightDir = normalize(uLightPos - FragPos);
         
@@ -540,7 +572,9 @@ void main() {
 
         vec3 result = (ambient + diffuse) * baseColor.rgb;
         FragColor = vec4(result, baseColor.a);
-    } else {
+    } 
+    else 
+    {
         FragColor = baseColor;
     }
 }
@@ -552,7 +586,8 @@ layout (location = 0) in vec3 aPos;
 
 uniform mat4 MVP;
 
-void main() {
+void main() 
+{
     gl_Position = MVP * vec4(aPos, 1.0);
 }
 )GLSL";
@@ -563,7 +598,8 @@ out vec4 FragColor;
 
 uniform vec3 uColor;
 
-void main() {
+void main() 
+{
     FragColor = vec4(uColor, 1.0);
 }
 )GLSL";
@@ -931,6 +967,12 @@ int main(int argc, char** argv)
                     g_renderMode = static_cast<RenderMode>(currentModeInt);
                 }
 
+                ImGui::Checkbox("Przezroczystosc (Alpha) (O)", &g_enableAlphaTest);
+                if (!g_enableAlphaTest)
+                {
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Pokaz strukture placht", &g_showAlphaBounds);
+                }
                 ImGui::Checkbox("Oswietlenie Scene (L)", &g_enableLighting);
                 ImGui::Checkbox("Pokaz HUD (T)", &g_showHUD);
                 ImGui::Separator();
@@ -1028,16 +1070,24 @@ int main(int argc, char** argv)
         glUniform1f(glGetUniformLocation(meshProgram, "uAmbientIntensity"), g_ambientIntensity);
         glUniform1i(glGetUniformLocation(meshProgram, "uEnableLighting"), g_enableLighting);
         glUniform1i(glGetUniformLocation(meshProgram, "uRenderMode"), static_cast<int>(g_renderMode));
+        glUniform1i(glGetUniformLocation(meshProgram, "uEnableAlphaTest"), g_enableAlphaTest);
+        glUniform1i(glGetUniformLocation(meshProgram, "uShowAlphaBounds"), g_showAlphaBounds);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, activeTex.id);
         glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
 
+        // Włączenie obsługi kanału Alpha
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         if (!mesh.faces.empty())
         {
             glBindVertexArray(meshVAO);
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.faces.size() * 3), GL_UNSIGNED_SHORT, 0);
         }
+
+        // Wyłączenie blendingu dla kolejnych obiektów
+        glDisable(GL_BLEND);
 
         // 2. Rysowanie Kostki Źródła Światła
         if (g_enableLighting)
