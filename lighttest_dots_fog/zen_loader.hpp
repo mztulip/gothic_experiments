@@ -181,6 +181,7 @@ static glm::mat4 zenTransformToGL(const glm::mat4& zenTransform)
 static void walkVobs(
     const std::shared_ptr<zenkit::VirtualObject>& vob,
     std::vector<LoadedVob>& out,
+    const std::string& gothicDir,
     const glm::vec3& parentZenPos = glm::vec3(0.0f))
 {
     // ------------------------------------------------------------
@@ -267,9 +268,6 @@ static void walkVobs(
                     zenkit::VisualType::MULTI_RESOLUTION_MESH
             )
             {
-                std::string gothicDir =
-                    getGothicDir();
-
                 if (!gothicDir.empty())
                 {
                     obj.meshPath =
@@ -303,7 +301,7 @@ static void walkVobs(
     {
         walkVobs(
             child,
-            out,
+            out, gothicDir,
             worldZenPos
         );
     }
@@ -313,6 +311,7 @@ static void walkVobs(
 static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
 {
     std::vector<LoadedVob> out;
+    std::string gothicDir = getGothicDir();
 
     try
     {
@@ -324,7 +323,7 @@ static std::vector<LoadedVob> loadVobsFromZen(const std::string& path)
         for (auto& vob : world.world_vobs)
         {
             // debugPrintVob(vob, 0);
-            walkVobs(vob, out);
+            walkVobs(vob, out, gothicDir);
         }
     }
     catch (const std::exception& e)
