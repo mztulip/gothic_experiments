@@ -260,7 +260,6 @@ static void walkVobs(
             obj.visualName =
                 vob->visual->name;
 
-
             if (
                 vob->visual->type ==
                     zenkit::VisualType::MESH ||
@@ -281,8 +280,10 @@ static void walkVobs(
                 }
             }
         }
-
-        out.push_back(obj);
+        if (vob->show_visual)
+        {
+          out.push_back(obj);
+        }
     }
 
 

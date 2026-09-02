@@ -21,7 +21,7 @@ struct VertexLoader {
 
 struct Face
 {
-    uint16_t a, b, c;
+    uint32_t a, b, c;   // zmiana z uint16_t na uint32_t
     uint16_t smoothingGroup = 0;
 };
 
@@ -119,7 +119,7 @@ private:
         uint32_t endPos,
         Mesh3DS& mesh,
         int currentMaterial,
-        uint16_t vertexOffset)
+        uint32_t vertexOffset)
     {
         while (static_cast<uint32_t>(file.tellg()) < endPos && file.good()) {
             uint32_t chunkStart = static_cast<uint32_t>(file.tellg());
@@ -150,7 +150,7 @@ private:
                 case 0x4000: // TRI_OBJECT (zawiera nazwę obiektu)
                 {
                     readString(file, nextChunk); // Odczytaj i pomijamy nazwę
-                    uint16_t currentVertexOffset = static_cast<uint16_t>(mesh.vertices.size());
+                    uint32_t currentVertexOffset = static_cast<uint32_t>(mesh.vertices.size());
                     parseChunk(file, nextChunk, mesh, currentMaterial, currentVertexOffset);
                     break;
                 }
@@ -203,10 +203,11 @@ private:
                     std::vector<uint16_t> raw(size_t(numFaces) * 4);
                     file.read(reinterpret_cast<char*>(raw.data()), raw.size() * sizeof(uint16_t));
 
-                    for (uint16_t i = 0; i < numFaces; ++i) {
-                        mesh.faces[startFaceIdx + i].a = raw[i * 4 + 0] + vertexOffset;
-                        mesh.faces[startFaceIdx + i].b = raw[i * 4 + 1] + vertexOffset;
-                        mesh.faces[startFaceIdx + i].c = raw[i * 4 + 2] + vertexOffset;
+                    for (uint16_t i = 0; i < numFaces; ++i)
+                    {
+                        mesh.faces[startFaceIdx + i].a = uint32_t(raw[i * 4 + 0]) + uint32_t(vertexOffset);
+                        mesh.faces[startFaceIdx + i].b = uint32_t(raw[i * 4 + 1]) + uint32_t(vertexOffset);
+                        mesh.faces[startFaceIdx + i].c = uint32_t(raw[i * 4 + 2]) + uint32_t(vertexOffset);
                     }
 
                     // Parsuj pod-bloki FACE_ARRAY (np. FACE_MATERIAL 0x4130)

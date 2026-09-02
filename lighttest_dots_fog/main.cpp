@@ -382,6 +382,16 @@ static bool createVobMeshGL(LoadedVob& vob)
         return false;
     }
 
+    glm::vec3 size = mesh.maxBounds - mesh.minBounds;
+    float maxDim = std::max(size.x, std::max(size.y, size.z));
+
+  if (maxDim > 3000.f)
+  {
+      printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
+            vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
+            mesh.vertices.size(), mesh.faces.size());
+  }
+
     vob.meshLocalTransform = mesh.localTransform;
 
     std::vector<Vertex> verts;
@@ -395,6 +405,12 @@ static bool createVobMeshGL(LoadedVob& vob)
     // ------------------------------------------------------------
     for (const auto& face : mesh.faces)
     {
+        if (face.a >= mesh.vertices.size() ||
+          face.b >= mesh.vertices.size() ||
+          face.c >= mesh.vertices.size())
+        {
+            continue; // pomijamy uszkodzony trojkat zamiast czytac smieci
+        }
         glm::vec3 p[3];
 
         p[0] = glm::vec3(
@@ -978,7 +994,8 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glClearColor(0.02f, 0.02f, 0.03f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glm::mat4 proj = glm::perspective(glm::radians(70.f), float(fbw)/float(fbh), 1.f, 8000.f);
+    // glm::mat4 proj = glm::perspective(glm::radians(70.f), float(fbw)/float(fbh), 1.f, 8000.f);
+    glm::mat4 proj = glm::perspective(glm::radians(70.f), float(fbw)/float(fbh), 3.f, 5000.f);
     glm::mat4 view = g_cam.view();
 
     glUseProgram(prog);
