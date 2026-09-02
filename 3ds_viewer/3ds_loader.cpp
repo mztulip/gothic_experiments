@@ -840,14 +840,19 @@ int main(int argc, char** argv)
         float radYaw = glm::radians(g_yaw);
         float radPitch = glm::radians(g_pitch);
 
-        // Kamera krąży wokół środka ciężkości modelu (mesh.center)
-        glm::vec3 camPos;
-        camPos.x = mesh.center.x + g_distance * cos(radPitch) * sin(radYaw);
-        camPos.y = mesh.center.y + g_distance * sin(radPitch);
-        camPos.z = mesh.center.z + g_distance * cos(radPitch) * cos(radYaw);
+        //Potrzebne  aby prawidłowo wyswitlać pliki 3ds konwersjia Y-up / Z-up
+        glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
-        glm::mat4 model = glm::mat4(1.0f);
-        glm::mat4 view  = glm::lookAt(camPos, mesh.center, glm::vec3(0.0f, 1.0f, 0.0f));
+        // Przelicz punkt środkowy (center) przez macierz obrotu
+        glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
+
+        //Pozycję kamery wylicz względem rotatedCenter
+        glm::vec3 camPos;
+        camPos.x = rotatedCenter.x + g_distance * cos(radPitch) * sin(radYaw);
+        camPos.y = rotatedCenter.y + g_distance * sin(radPitch);
+        camPos.z = rotatedCenter.z + g_distance * cos(radPitch) * cos(radYaw);
+
+        glm::mat4 view = glm::lookAt(camPos, rotatedCenter, glm::vec3(0.0f, 1.0f, 0.0f));
         
         float nearPlane = std::max(0.1f, mesh.maxDimension * 0.01f);
         float farPlane  = std::max(1000.0f, mesh.maxDimension * 100.0f);
