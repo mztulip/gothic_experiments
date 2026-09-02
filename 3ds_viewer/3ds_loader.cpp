@@ -245,6 +245,7 @@ static double g_lastMouseY = 0.0;
 static std::vector<std::string> g_fileList;
 static size_t g_currentFileIdx = 0;
 static bool g_needMeshReload = false;
+static bool g_scrollToSelected = false;
 
 static RenderMode g_renderMode = RENDER_TEXTURED;
 static bool g_showHUD = true;
@@ -340,11 +341,13 @@ static void keyCallback(GLFWwindow* window, int key, int scancode, int action, i
             {
                 g_currentFileIdx = (g_currentFileIdx + 1) % g_fileList.size();
                 g_needMeshReload = true;
+                g_scrollToSelected = true;
             }
             if (key == GLFW_KEY_UP || key == GLFW_KEY_P)
             {
                 g_currentFileIdx = (g_currentFileIdx + g_fileList.size() - 1) % g_fileList.size();
                 g_needMeshReload = true;
+                g_scrollToSelected = true;
             }
         }
     }
@@ -708,7 +711,7 @@ int main(int argc, char** argv)
 
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
-
+        
         // --- Panel Lista Plików ---
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(320, (float)height));
@@ -741,9 +744,11 @@ int main(int argc, char** argv)
                     g_lastInteractionTime = glfwGetTime();
                 }
 
-                if (isSelected && ImGui::IsWindowFocused())
+                // Przewijaj TYLKO wtedy, gdy explicite ustawiono flagę w keyCallback
+                if (isSelected && g_scrollToSelected)
                 {
                     ImGui::SetScrollHereY();
+                    g_scrollToSelected = false; // Reset po wykonaniu skoku
                 }
             }
         }
