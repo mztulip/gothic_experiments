@@ -143,6 +143,7 @@ uniform float uRange;
 uniform float uLightIntensity;
 uniform int   uFormulaMode;
 uniform int   uAmbientOnly;
+uniform float uAmbientStrength;
 
 void main() {
   vec3 albedo   = texture(uGAlbedo, vUV).rgb;
@@ -151,7 +152,7 @@ void main() {
 
   if(uAmbientOnly==1) {
     float skyLight = max(0.0, normal.y) * 0.15;
-    FragColor = vec4(albedo * (0.08 + skyLight), 1.0);
+    FragColor = vec4(albedo * (uAmbientStrength + skyLight), 1.0);
     return;
   }
 
@@ -222,6 +223,7 @@ uniform int   uFormulaMode;
 uniform int   uTonemap;
 uniform bool  uIsMarker;
 uniform int   uAmbientOnly;
+uniform float uAmbientStrength;
 uniform bool  uIsFog;
 uniform float uFogDensity;
 
@@ -247,7 +249,7 @@ void main()
     if(uAmbientOnly==1)
     {
         float skyLight = max(0.0, normalize(vNormal).y) * 0.15;
-        hdrColor = uAlbedo * (0.08 + skyLight);
+        hdrColor = uAlbedo * (uAmbientStrength + skyLight);
     }
     else
     {

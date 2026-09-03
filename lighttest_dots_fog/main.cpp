@@ -33,6 +33,7 @@
 #include "texture_loader.hpp"
 #include "fog_buffer.hpp"
 #include "geometry_room.hpp"
+#include "favorites.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -69,6 +70,7 @@ static int   g_formulaMode    = 1; // 0=linia, 1=obecna
 static int   g_lightcorrection = 1; // 0=brak, 1=obecna
 static int   g_tonemap        = 1; // wlaczony domyslnie - tak jak w OpenGothic
 static float g_lightIntensity = 1.f;
+static float g_ambientStrength = 0.08f;
 static bool  g_fogEnabled    = false;
 static float g_fogDensity    = 1.0f;
 static bool  g_texturesEnabled = true;
@@ -612,7 +614,7 @@ static void drawImGuiControls(GLFWwindow* win, bool worldMode)
     g_formulaMode = formula;
 
     ImGui::SliderFloat("Intensywnosc [ [ / ] ]", &g_lightIntensity, 0.f, 5.f, "%.3f");
-
+    ImGui::SliderFloat("Ambient", &g_ambientStrength, 0.f, 0.5f, "%.3f");
     ImGui::Separator();
     bool fog = g_fogEnabled;
     if(ImGui::Checkbox("Mgla [F]", &fog)) g_fogEnabled = fog;
@@ -633,7 +635,7 @@ static void drawImGuiControls(GLFWwindow* win, bool worldMode)
             if(selected) ImGui::PopStyleColor();
         }
     }
-
+    ImGui::SliderFloat("Predkosc kamery", &g_cam.speed, 10.f, 2000.f, "%.0f");
     ImGui::End();
 }
 
@@ -741,6 +743,10 @@ int main(int argc, char** argv)
   ImGui::StyleColorsDark();
   ImGui_ImplGlfw_InitForOpenGL(win, true);
   ImGui_ImplOpenGL3_Init("#version 330");
+  g_currentWorld = worldIdFromZen(zenPath);
+  loadFavorites();
+  printf("[FAVORITES] Aktualny swiat: %s (wpisow lacznie w pliku: %zu)\n",
+       g_currentWorld.c_str(), g_favorites.size());
 
   if (worldMode)
   {
@@ -978,6 +984,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     drawImGuiControls(win, worldMode);
+    drawFavoritesWindow(g_cam);
 
     float speed = g_cam.speed * dt * (g_keys[GLFW_KEY_LEFT_SHIFT] ? 3.f : 1.f);
     if(g_keys[GLFW_KEY_W]) g_cam.pos += g_cam.front()*speed;
@@ -1012,6 +1019,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
 
     glUniform1i(glGetUniformLocation(prog,"uAmbientOnly"), 0);
+    glUniform1f(glGetUniformLocation(prog,"uAmbientStrength"), g_ambientStrength);
     glUniform1f(glGetUniformLocation(prog,"uPointSizeBase"), g_fogPointSize);
     glUniform1f(glGetUniformLocation(prog,"uFogDensity"), g_fogDensity);
 
@@ -1083,6 +1091,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glUniform1i(glGetUniformLocation(lightProg,"uGNormal"), 1);
     glUniform1i(glGetUniformLocation(lightProg,"uGWorldPos"), 2);
     glUniform1i(glGetUniformLocation(lightProg,"uAmbientOnly"), 1);
+    glUniform1f(glGetUniformLocation(lightProg,"uAmbientStrength"), g_ambientStrength);
     glBindVertexArray(quadVao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
