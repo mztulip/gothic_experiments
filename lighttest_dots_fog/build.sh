@@ -21,8 +21,10 @@ if [[ "${1:-}" == "--rebuild-zenkit" ]]; then
   REBUILD_ZENKIT=1
 fi
 
-ZENKIT_LIB="$ZENKIT_BUILD_DIR/libzenkit.a"
-SQUISH_LIB="$ZENKIT_BUILD_DIR/vendor/libsquish/libsquish.a"
+if [[ ! -f "$ZENKIT_DIR/CMakeLists.txt" ]]; then
+  echo "ZenKit submodule nie jest zainicjalizowany - uruchamiam git submodule update --init --recursive"
+  git -C "$ZENKIT_DIR/.." submodule update --init --recursive
+fi
 
 # ------------------------------------------------------------------
 # ZenKit - buduj tylko jesli biblioteki jeszcze nie istnieja, albo
@@ -36,10 +38,20 @@ if [[ "$REBUILD_ZENKIT" == "1" || ! -f "$ZENKIT_LIB" || ! -f "$SQUISH_LIB" ]]; t
   echo "Build : $ZENKIT_BUILD_DIR"
   echo
 
+  # cmake -S "$ZENKIT_DIR" \
+  #   -B "$ZENKIT_BUILD_DIR" \
+  #   -DCMAKE_BUILD_TYPE=Release \
+  #   -DZK_BUILD_TESTS=OFF \
+  #   -DZK_BUILD_EXAMPLES=OFF 
+
   cmake -S "$ZENKIT_DIR" \
     -B "$ZENKIT_BUILD_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DZK_BUILD_TESTS=OFF
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DZK_BUILD_TESTS=OFF \
+    -DZK_BUILD_EXAMPLES=OFF \
+    -DCMAKE_DEBUG_POSTFIX="" \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address -g -fno-omit-frame-pointer" \
+    -DCMAKE_C_FLAGS="-fsanitize=address -g -fno-omit-frame-pointer"
 
   cmake --build "$ZENKIT_BUILD_DIR" -j"$(nproc)"
 else
@@ -47,6 +59,20 @@ else
   echo " ZenKit juz zbudowany - pomijam (uzyj --rebuild-zenkit aby wymusic)"
   echo "=========================================="
 fi
+
+if [[ -f "$ZENKIT_BUILD_DIR/libzenkitd.a" ]]; then
+  ZENKIT_LIB="$ZENKIT_BUILD_DIR/libzenkitd.a"
+else
+  ZENKIT_LIB="$ZENKIT_BUILD_DIR/libzenkit.a"
+fi
+
+
+if [[ -f "$ZENKIT_BUILD_DIR/vendor/libsquish/libsquishd.a" ]]; then
+  SQUISH_LIB="$ZENKIT_BUILD_DIR/vendor/libsquish/libsquishd.a"
+else
+  SQUISH_LIB="$ZENKIT_BUILD_DIR/vendor/libsquish/libsquish.a"
+fi
+
 echo
 
 if [[ ! -f "$ZENKIT_LIB" ]]; then
@@ -124,7 +150,8 @@ build_program() {
   echo " Building $out"
   echo "=========================================="
 
-  "$CXX" -std=c++20 $UTF8_FLAGS "$src" \
+  "$CXX" -std=c++20 -g -fsanitize=address -fno-omit-frame-pointer  $UTF8_FLAGS "$src" \
+    -D_ZK_WITH_MMAP=1 \
     -I"$ZENKIT_DIR/include" \
     -I"$ZENKIT_DIR/vendor/glm" \
     $IMGUI_INCLUDES \

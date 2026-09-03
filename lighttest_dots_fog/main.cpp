@@ -34,6 +34,7 @@
 #include "fog_buffer.hpp"
 #include "geometry_room.hpp"
 #include "favorites.hpp"
+#include "vfs_loader.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -683,6 +684,17 @@ int main(int argc, char** argv)
     } else if (zenPath.empty()) {
       zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
     }
+  }
+
+  std::string gothicDir = getGothicDir();
+  if (!gothicDir.empty())
+  {
+      auto& vfs = gothicVfs(gothicDir);
+      (void)vfs; // na razie tylko test montowania, nie uzywamy jeszcze
+  }
+  else
+  {
+      fprintf(stderr, "GOTHIC2_DIR nie ustawione - VFS nie zostanie zamontowany\n");
   }
 
   std::vector<LoadedLight> worldLights;
