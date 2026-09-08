@@ -17,16 +17,13 @@
 
 namespace fs = std::filesystem;
 
-// Struktura pomocnicza do reprezentacji drzewa konsolowego
 struct ConsoleTreeNode 
 {
     std::string name;
     bool is_directory = false;
-    // std::map automatycznie sortuje podkatalogi i pliki alfabetycznie
     std::map<std::string, std::shared_ptr<ConsoleTreeNode>> children;
 };
 
-// Rekurencyjne budowanie tymczasowego drzewa na podstawie węzłów ZenKit
 void build_console_tree(const zenkit::VfsNode& node, std::shared_ptr<ConsoleTreeNode>& current_console_node) 
 {
     if (node.type() == zenkit::VfsNodeType::DIRECTORY) 
@@ -47,7 +44,6 @@ void build_console_tree(const zenkit::VfsNode& node, std::shared_ptr<ConsoleTree
     }
 }
 
-// Rekurencyjne renderowanie ładnego drzewka ze znakami ├──, └── i │
 void print_console_tree_recursive(const std::shared_ptr<ConsoleTreeNode>& node, const std::string& indent = "", bool is_last = true) 
 {
     if (!node->name.empty()) 
@@ -73,7 +69,6 @@ void print_console_tree_recursive(const std::shared_ptr<ConsoleTreeNode>& node, 
     }
 }
 
-// Główna funkcja wywoływana z main
 void print_vfs_tree_console(const zenkit::VfsNode& root_node) 
 {
     auto root = std::make_shared<ConsoleTreeNode>();
@@ -87,56 +82,58 @@ void print_vfs_tree_console(const zenkit::VfsNode& root_node)
     std::cout << "===============================================\n";
 }
 
-// Rekurencyjne wyciąganie wszystkich ścieżek z VFS ZenKit i budowanie z nich drzewa
-void collect_vfs_paths(const zenkit::VfsNode& node, const std::string& current_path, std::shared_ptr<ConsoleTreeNode>& root) 
+// Funkcja rekurencyjna do wyciągania całej struktury VFS na dysk
+void extract_node_recursive(const zenkit::VfsNode& node, const fs::path& current_dest_path) 
 {
-    std::string full_path = current_path.empty() ? node.name() : current_path + "/" + node.name();
-
     if (node.type() == zenkit::VfsNodeType::DIRECTORY) 
     {
+        fs::path dir_path = current_dest_path / node.name();
+        fs::create_directories(dir_path);
+
         for (const auto& child : node.children()) 
         {
-            collect_vfs_paths(child, full_path, root);
+            extract_node_recursive(child, dir_path);
         }
     } 
     else 
     {
-        // Rozbijamy pełną ścieżkę (np. WORLDS/NEWWORLD/NEWWORLD.ZEN) na segmenty
-        std::string path_str = node.name();
-        std::vector<std::string> parts;
-        std::string token;
-        std::stringstream ss(path_str);
-
-        while (std::getline(ss, token, '/')) 
+        fs::path file_path = current_dest_path / node.name();
+        try 
         {
-            if (!token.empty()) 
+            auto rd = node.open_read();
+            std::ofstream out(file_path, std::ios::binary);
+
+            char buffer[8192];
+            while (!rd->eof()) 
             {
-                parts.push_back(token);
+                std::size_t bytes_read = rd->read(buffer, sizeof(buffer));
+                if (bytes_read == 0) 
+                {
+                    break;
+                }
+                out.write(buffer, static_cast<std::streamsize>(bytes_read));
             }
-        }
-
-        if (parts.empty()) 
+            std::cout << "Wypakowano: " << file_path.string() << "\n";
+        } 
+        catch (const std::exception& e) 
         {
-            parts.push_back(path_str);
-        }
-
-        // Wstawiamy segmenty do drzewa
-        auto curr = root;
-        for (size_t i = 0; i < parts.size(); ++i) 
-        {
-            bool is_file = (i == parts.size() - 1);
-            const std::string& part = parts[i];
-
-            if (curr->children.find(part) == curr->children.end()) 
-            {
-                auto new_node = std::make_shared<ConsoleTreeNode>();
-                new_node->name = part;
-                new_node->is_directory = !is_file;
-                curr->children[part] = new_node;
-            }
-            curr = curr->children[part];
+            std::cerr << "Blad podczas wypakowywania " << file_path.string() << ": " << e.what() << "\n";
         }
     }
+}
+
+void extract_vfs_to_directory(const zenkit::VfsNode& root_node, const std::string& dest_dir) 
+{
+    fs::path target_dir(dest_dir);
+    
+    std::cout << "\nRozpoczynanie wypakowywania VFS do: " << fs::absolute(target_dir).string() << "\n";
+    
+    for (const auto& child : root_node.children()) 
+    {
+        extract_node_recursive(child, target_dir);
+    }
+    
+    std::cout << "Wypakowywanie zakonczone sukcesem!\n";
 }
 
 struct VdfViewerApp 
@@ -309,8 +306,10 @@ static void glfw_error_callback(int error, const char* description)
 int main(int argc, char** argv) 
 {
     std::string target_path;
+    std::string extract_dest_path;
     bool dump_tree_only = false;
 
+    // Parsowanie argumentow CLI
     for (int i = 1; i < argc; ++i) 
     {
         std::string arg = argv[i];
@@ -318,12 +317,17 @@ int main(int argc, char** argv)
         {
             dump_tree_only = true;
         } 
+        else if ((arg == "-extract" || arg == "-e" || arg == "--extract") && i + 1 < argc) 
+        {
+            extract_dest_path = argv[++i];
+        } 
         else if (target_path.empty()) 
         {
             target_path = arg;
         }
     }
 
+    // Fallback na zmienna srodowiskowa GOTHIC2_DIR
     if (target_path.empty()) 
     {
         if (const char* env_dir = std::getenv("GOTHIC2_DIR")) 
@@ -332,6 +336,7 @@ int main(int argc, char** argv)
         }
     }
 
+    // Tryb konsolowy - zrzut drzewa
     if (dump_tree_only) 
     {
         if (target_path.empty()) 
@@ -345,6 +350,21 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    // Tryb konsolowy - wypakowanie calej struktury
+    if (!extract_dest_path.empty()) 
+    {
+        if (target_path.empty()) 
+        {
+            std::cerr << "Blad: Nie podano sciezki do Gothica ani nie ustawiono GOTHIC2_DIR.\n";
+            return 1;
+        }
+
+        zenkit::Vfs& vfs = gothicVfs(target_path);
+        extract_vfs_to_directory(vfs.root(), extract_dest_path);
+        return 0;
+    }
+
+    // Tryb GUI z GLFW/ImGui
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) 
     {

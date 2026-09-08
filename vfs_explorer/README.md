@@ -54,3 +54,7 @@ export GOTHIC2_DIR="/home/mz/JoWood/Gothic II"
 ./vfsexplorer -tree
 
 ./vfsexplorer "/home/mz/JoWood/Gothic II" -tree
+
+./vfsexplorer -extract /tmp/extracted_vfs
+
+./vfsexplorer /home/mz/JoWood/Gothic\ II/ -extract ./out_dir
