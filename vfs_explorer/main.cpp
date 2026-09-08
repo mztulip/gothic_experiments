@@ -5,6 +5,8 @@
 #include <fstream>
 #include <cstdlib>
 #include <algorithm>
+#include <map>
+#include <memory>
 
 #include <GLFW/glfw3.h>
 #include "imgui.h"
@@ -14,6 +16,128 @@
 #include "vfs_loader.hpp"
 
 namespace fs = std::filesystem;
+
+// Struktura pomocnicza do reprezentacji drzewa konsolowego
+struct ConsoleTreeNode 
+{
+    std::string name;
+    bool is_directory = false;
+    // std::map automatycznie sortuje podkatalogi i pliki alfabetycznie
+    std::map<std::string, std::shared_ptr<ConsoleTreeNode>> children;
+};
+
+// Rekurencyjne budowanie tymczasowego drzewa na podstawie węzłów ZenKit
+void build_console_tree(const zenkit::VfsNode& node, std::shared_ptr<ConsoleTreeNode>& current_console_node) 
+{
+    if (node.type() == zenkit::VfsNodeType::DIRECTORY) 
+    {
+        for (const auto& child : node.children()) 
+        {
+            auto child_console_node = std::make_shared<ConsoleTreeNode>();
+            child_console_node->name = child.name();
+            child_console_node->is_directory = (child.type() == zenkit::VfsNodeType::DIRECTORY);
+
+            current_console_node->children[child.name()] = child_console_node;
+
+            if (child.type() == zenkit::VfsNodeType::DIRECTORY) 
+            {
+                build_console_tree(child, child_console_node);
+            }
+        }
+    }
+}
+
+// Rekurencyjne renderowanie ładnego drzewka ze znakami ├──, └── i │
+void print_console_tree_recursive(const std::shared_ptr<ConsoleTreeNode>& node, const std::string& indent = "", bool is_last = true) 
+{
+    if (!node->name.empty()) 
+    {
+        std::cout << indent;
+        std::cout << (is_last ? "└── " : "├── ");
+        std::cout << node->name << "\n";
+    }
+
+    std::string child_indent = indent;
+    if (!node->name.empty()) 
+    {
+        child_indent += (is_last ? "    " : "│   ");
+    }
+
+    size_t total_children = node->children.size();
+    size_t current_index = 0;
+
+    for (const auto& [name, child] : node->children) 
+    {
+        bool last_child = (++current_index == total_children);
+        print_console_tree_recursive(child, child_indent, last_child);
+    }
+}
+
+// Główna funkcja wywoływana z main
+void print_vfs_tree_console(const zenkit::VfsNode& root_node) 
+{
+    auto root = std::make_shared<ConsoleTreeNode>();
+    root->name = "";
+    root->is_directory = true;
+
+    build_console_tree(root_node, root);
+
+    std::cout << "\n================ VFS TREE DUMP ================\n/\n";
+    print_console_tree_recursive(root);
+    std::cout << "===============================================\n";
+}
+
+// Rekurencyjne wyciąganie wszystkich ścieżek z VFS ZenKit i budowanie z nich drzewa
+void collect_vfs_paths(const zenkit::VfsNode& node, const std::string& current_path, std::shared_ptr<ConsoleTreeNode>& root) 
+{
+    std::string full_path = current_path.empty() ? node.name() : current_path + "/" + node.name();
+
+    if (node.type() == zenkit::VfsNodeType::DIRECTORY) 
+    {
+        for (const auto& child : node.children()) 
+        {
+            collect_vfs_paths(child, full_path, root);
+        }
+    } 
+    else 
+    {
+        // Rozbijamy pełną ścieżkę (np. WORLDS/NEWWORLD/NEWWORLD.ZEN) na segmenty
+        std::string path_str = node.name();
+        std::vector<std::string> parts;
+        std::string token;
+        std::stringstream ss(path_str);
+
+        while (std::getline(ss, token, '/')) 
+        {
+            if (!token.empty()) 
+            {
+                parts.push_back(token);
+            }
+        }
+
+        if (parts.empty()) 
+        {
+            parts.push_back(path_str);
+        }
+
+        // Wstawiamy segmenty do drzewa
+        auto curr = root;
+        for (size_t i = 0; i < parts.size(); ++i) 
+        {
+            bool is_file = (i == parts.size() - 1);
+            const std::string& part = parts[i];
+
+            if (curr->children.find(part) == curr->children.end()) 
+            {
+                auto new_node = std::make_shared<ConsoleTreeNode>();
+                new_node->name = part;
+                new_node->is_directory = !is_file;
+                curr->children[part] = new_node;
+            }
+            curr = curr->children[part];
+        }
+    }
+}
 
 struct VdfViewerApp 
 {
@@ -64,7 +188,6 @@ struct VdfViewerApp
         }
     }
 
-    // Pomocnicza funkcja sprawdzajaca czy wezel lub jego dzieci pasuja do filtra
     bool node_matches_filter(const zenkit::VfsNode& node, const std::string& filter) const
     {
         if (filter.empty())
@@ -105,7 +228,6 @@ struct VdfViewerApp
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
 
-        // Jesli aktywnie wyszukujemy, rozwijamy drzewo automatycznie
         if (!filter.empty())
         {
             flags |= ImGuiTreeNodeFlags_DefaultOpen;
@@ -147,7 +269,6 @@ struct VdfViewerApp
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
 
-        // Sekcja sciezki Gothica
         ImGui::Text("Sciezka:");
         ImGui::SameLine();
         ImGui::InputText("##gothicpath", path_input_buf, sizeof(path_input_buf));
@@ -157,7 +278,6 @@ struct VdfViewerApp
             load_gothic_dir(path_input_buf);
         }
 
-        // Sekcja wyszukiwarki
         ImGui::Text("Szukaj: ");
         ImGui::SameLine();
         ImGui::InputText("##search", search_buf, sizeof(search_buf));
@@ -188,6 +308,43 @@ static void glfw_error_callback(int error, const char* description)
 
 int main(int argc, char** argv) 
 {
+    std::string target_path;
+    bool dump_tree_only = false;
+
+    for (int i = 1; i < argc; ++i) 
+    {
+        std::string arg = argv[i];
+        if (arg == "-tree" || arg == "--tree") 
+        {
+            dump_tree_only = true;
+        } 
+        else if (target_path.empty()) 
+        {
+            target_path = arg;
+        }
+    }
+
+    if (target_path.empty()) 
+    {
+        if (const char* env_dir = std::getenv("GOTHIC2_DIR")) 
+        {
+            target_path = env_dir;
+        }
+    }
+
+    if (dump_tree_only) 
+    {
+        if (target_path.empty()) 
+        {
+            std::cerr << "Blad: Nie podano sciezki do Gothica ani nie ustawiono GOTHIC2_DIR.\n";
+            return 1;
+        }
+
+        zenkit::Vfs& vfs = gothicVfs(target_path);
+        print_vfs_tree_console(vfs.root());
+        return 0;
+    }
+
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) 
     {
@@ -219,17 +376,6 @@ int main(int argc, char** argv)
 
     VdfViewerApp app;
 
-    std::string target_path;
-
-    if (argc > 1) 
-    {
-        target_path = argv[1];
-    } 
-    else if (const char* env_dir = std::getenv("GOTHIC2_DIR")) 
-    {
-        target_path = env_dir;
-    }
-
     if (!target_path.empty()) 
     {
         snprintf(app.path_input_buf, sizeof(app.path_input_buf), "%s", target_path.c_str());
@@ -240,7 +386,6 @@ int main(int argc, char** argv)
     {
         glfwPollEvents();
 
-        // Zamknięcie programu klawiszem ESC
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
