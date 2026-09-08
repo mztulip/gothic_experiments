@@ -4,6 +4,8 @@ A lightweight GUI application built with C++20, **ZenKit**, **ImGui**, and **GLF
 
 It features automatic VDF mounting from the `Data/` directory, live file searching/filtering, resource extraction, and a console-only text tree dump mode.
 
+![zEngine VDF Explorer](vfs_explorer.png)
+
 ---
 
 ## 🚀 Features
@@ -55,6 +57,24 @@ export GOTHIC2_DIR="/home/mz/JoWood/Gothic II"
 
 ./vfsexplorer "/home/mz/JoWood/Gothic II" -tree
 
+================ VFS TREE DUMP ================
+/
+└── WORLDS
+    ├── ADDON
+    │   └── ADDONWORLD.ZEN
+    ├── FIRETREE_LAMP.ZEN
+    ├── FIRETREE_LAMP1.ZEN
+    ├── FIRETREE_MEDIUM.ZEN
+    ├── ITLSTORCHBURNING.ZEN
+    ├── NEWWORLD
+    │   ├── DRAGONISLAND.ZEN
+    │   └── NEWWORLD.ZEN
+    └── OLDWORLD
+        └── OLDWORLD.ZEN
+===============================================
+
 ./vfsexplorer -extract /tmp/extracted_vfs
 
 ./vfsexplorer /home/mz/JoWood/Gothic\ II/ -extract ./out_dir
+
+
