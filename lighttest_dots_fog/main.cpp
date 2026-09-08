@@ -571,7 +571,7 @@ static void drawVobsToGBuffer(
     GLint locHasTex,
     GLint locAlbedo)
 {
-    const glm::vec3 vobFallbackColor(0.45f, 0.45f, 0.5f); //szary
+    const glm::vec3 vobFallbackColor(0.45f, 0.45f, 0.5f);
 
     for (const auto* objPtr : vobs)
     {
@@ -580,13 +580,12 @@ static void drawVobsToGBuffer(
             continue;
 
         glm::mat4 model =
-            glm::translate(glm::mat4(1.f), obj.pos)
-            * obj.rotation
-            * getVobBaseRotation();
+            (g_meshSource == MeshSource::MRM)
+                ? glm::translate(glm::mat4(1.f), obj.pos) * obj.rotation
+                : glm::translate(glm::mat4(1.f), obj.pos) * obj.rotation * getVobBaseRotation();
 
         glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
 
-        // Na razie VOB-y nie maja przypisanych tekstur, wiec albedo = kolor typu
         glUniform1i(locHasTex, 0);
         glUniform3fv(locAlbedo, 1, glm::value_ptr(vobFallbackColor));
 
@@ -595,312 +594,319 @@ static void drawVobsToGBuffer(
     }
 }
 
+static void loadAllVobMeshes(std::vector<LoadedVob>& worldVobs)
+{
+    auto tMeshStart = std::chrono::high_resolution_clock::now();
+
+    // 1. Zbierz tylko unikalne visualName (dziala dla 3DS i MRM jednakowo)
+    std::unordered_map<std::string, std::vector<LoadedVob*>> uniqueMeshes;
+    for (auto& vob : worldVobs)
+    {
+        if (vob.meshLoaded && !vob.visualName.empty())
+        {
+            uniqueMeshes[vob.visualName].push_back(&vob);
+        }
+    }
+
+    printf("[VOB MESH] Znaleziono %zu unikalnych meshy dla %zu VOB-ow. Ladowanie...\n",
+          uniqueMeshes.size(), worldVobs.size());
+
+    size_t loadedCount = 0;
+    for (auto& [visualName, vobList] : uniqueMeshes)
+    {
+        ++loadedCount;
+        if (loadedCount % 50 == 0 || loadedCount == uniqueMeshes.size())
+        {
+            printf("[VOB MESH] Postep unikalnych: %zu / %zu\n", loadedCount, uniqueMeshes.size());
+            fflush(stdout);
+        }
+
+        LoadedVob* firstVob = vobList[0];
+        if (createVobMeshGL(*firstVob))
+        {
+            for (size_t i = 1; i < vobList.size(); ++i)
+            {
+                vobList[i]->meshVao = firstVob->meshVao;
+                vobList[i]->meshVbo = firstVob->meshVbo;
+                vobList[i]->meshVertexCount = firstVob->meshVertexCount;
+                vobList[i]->meshLocalTransform = firstVob->meshLocalTransform;
+            }
+        }
+        else
+        {
+            for (size_t i = 1; i < vobList.size(); ++i)
+                vobList[i]->meshLoaded = false;
+        }
+    }
+
+    auto tMeshEnd = std::chrono::high_resolution_clock::now();
+    printf("[LOG] Zaladowano meshe VOB-ow w: %.2f ms (unikalnych w pamieci: %zu)\n",
+          std::chrono::duration<float, std::milli>(tMeshEnd - tMeshStart).count(),
+          g_vobMeshCache.size());
+}
+
 int main(int argc, char** argv)
 {
-  std::string zenPath;
-  TextureSource texSource = TextureSource::GothicOnly;
+    std::string zenPath;
+    TextureSource texSource = TextureSource::GothicOnly;
 
-  for (int i = 1; i < argc; ++i) {
-    std::string a = argv[i];
-    if (a == "--mydata-only" || a == "--only-mydata") {
-      texSource = TextureSource::MyDataOnly;
-    } else if (a == "--gothic-only" || a == "--only-gothic") {
-      texSource = TextureSource::GothicOnly;
-    } else if (zenPath.empty()) {
-      zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--mydata-only" || a == "--only-mydata") {
+        texSource = TextureSource::MyDataOnly;
+        } else if (a == "--gothic-only" || a == "--only-gothic") {
+        texSource = TextureSource::GothicOnly;
+        } else if (zenPath.empty()) {
+        zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
+        }
     }
-  }
 
-  std::string gothicDir = getGothicDir();
-  if (!gothicDir.empty())
-  {
-      auto& vfs = gothicVfs(gothicDir);
-      (void)vfs; // na razie tylko test montowania, nie uzywamy jeszcze
-  }
-  else
-  {
-      fprintf(stderr, "GOTHIC2_DIR nie ustawione - VFS nie zostanie zamontowany\n");
-  }
+    std::string gothicDir = getGothicDir();
+    if (!gothicDir.empty())
+    {
+        auto& vfs = gothicVfs(gothicDir);
+        (void)vfs; // na razie tylko test montowania, nie uzywamy jeszcze
+    }
+    else
+    {
+        fprintf(stderr, "GOTHIC2_DIR nie ustawione - VFS nie zostanie zamontowany\n");
+    }
 
-  std::vector<LoadedLight> worldLights;
-  bool worldMode = false;
-  if(argc>1)
-  {
-    worldLights = loadLightsFromZen(argv[1]);
-    worldMode = !worldLights.empty();
-    if(argc>1 && !worldMode)
-      fprintf(stderr, "Brak swiatel dynamicznych w %s - przechodze do trybu demo.\n", argv[1]);
-  }
+    std::vector<LoadedLight> worldLights;
+    bool worldMode = false;
+    if(argc>1)
+    {
+        worldLights = loadLightsFromZen(argv[1]);
+        worldMode = !worldLights.empty();
+        if(argc>1 && !worldMode)
+        fprintf(stderr, "Brak swiatel dynamicznych w %s - przechodze do trybu demo.\n", argv[1]);
+    }
 
-  std::vector<LoadedVob> worldVobs;
+    std::vector<LoadedVob> worldVobs;
 
-  if (worldMode)
-  {
-      worldVobs = loadVobsFromZen(zenPath);
-  }
-
-
-  if(!worldMode)
-  {
-    // brak swiatla z ZEN - dodajemy jeden wpis reprezentujacy swiatlo demo.
-    // Jego pos/range/color/rSource beda aktualizowane co klatke z aktualnego
-    // presetu (klawisze 1-6, M, -/=), wiec tu wpisujemy tylko wartosci startowe.
-    LoadedLight demo;
-    demo.pos     = {0.f, 120.f, 0.f};
-    demo.range   = PRESETS[g_presetIdx].range;
-    demo.color   = PRESETS[g_presetIdx].color;
-    demo.preset  = PRESETS[g_presetIdx].name;
-    worldLights.push_back(demo);
-  }
-
-  TextureCache texCache;
-  texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/", texSource);
-  std::vector<SubMesh> worldSubMeshes;
-
-  glm::vec3 camStart;
-
-  if(!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-  GLFWwindow* win = glfwCreateWindow(1280, 720, "lighttest", nullptr, nullptr);
-  if(!win) { fprintf(stderr, "glfwCreateWindow failed\n"); glfwTerminate(); return 1; }
-  glfwMakeContextCurrent(win);
-  glfwSwapInterval(1);
-  glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-  glfwSetKeyCallback(win, keyCallback);
-  glfwSetCursorPosCallback(win, cursorCallback);
-
-  glEnable(GL_DEPTH_TEST);
-
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& imguiIo = ImGui::GetIO(); (void)imguiIo;
-  ImGui::StyleColorsDark();
-  ImGui_ImplGlfw_InitForOpenGL(win, true);
-  ImGui_ImplOpenGL3_Init("#version 330");
-  g_currentWorld = worldIdFromZen(zenPath);
-  loadFavorites();
-  printf("[FAVORITES] Aktualny swiat: %s (wpisow lacznie w pliku: %zu)\n",
-       g_currentWorld.c_str(), g_favorites.size());
-
-  if (worldMode)
-  {
-      auto tMeshStart = std::chrono::high_resolution_clock::now();
-      
-      // 1. Zbierz tylko unikalne ścieżki do meshy
-      std::unordered_map<std::string, std::vector<LoadedVob*>> uniqueMeshes;
-      for (auto& vob : worldVobs)
-      {
-          if (vob.meshLoaded && !vob.meshPath.empty())
-          {
-              uniqueMeshes[vob.meshPath].push_back(&vob);
-          }
-      }
-
-      printf("[VOB MESH] Znaleziono %zu unikalnych plików .3DS dla %zu VOB-ów. Ładowanie...\n", 
-            uniqueMeshes.size(), worldVobs.size());
-
-      // 2. Ładuj tylko UNIKALNE pliki z dysku i do GPU
-      size_t loadedCount = 0;
-      for (auto& [meshPath, vobList] : uniqueMeshes)
-      {
-          ++loadedCount;
-          if (loadedCount % 50 == 0 || loadedCount == uniqueMeshes.size())
-          {
-              printf("[VOB MESH] Postęp unikalnych: %zu / %zu\n", loadedCount, uniqueMeshes.size());
-              fflush(stdout);
-          }
-
-          // Pierwszy VOB z listy posłuży do załadowania siatki do cache
-          LoadedVob* firstVob = vobList[0];
-          if (createVobMeshGL(*firstVob))
-          {
-              // Przypisz załadowany VAO/VBO wszystkim pozostałym VOB-om używającym tego samego pliku
-              for (size_t i = 1; i < vobList.size(); ++i)
-              {
-                  vobList[i]->meshVao = firstVob->meshVao;
-                  vobList[i]->meshVbo = firstVob->meshVbo;
-                  vobList[i]->meshVertexCount = firstVob->meshVertexCount;
-                  vobList[i]->meshLocalTransform = firstVob->meshLocalTransform;
-              }
-          }
-      }
-
-      auto tMeshEnd = std::chrono::high_resolution_clock::now();
-      printf("[LOG] Załadowano meshe VOB-ów w: %.2f ms (unikalnych w pamięci: %zu)\n",
-            std::chrono::duration<float, std::milli>(tMeshEnd - tMeshStart).count(),
-            g_vobMeshCache.size());
-  }
-
-  printf("[MAIN] Zaczynam kompilacje shaderow...\n"); fflush(stdout);
-
-  GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
-  std::string fragFullSrc = buildFragSource(FRAG_SRC);
-  GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());
-  GLuint prog = linkProgram(vs, fs);
-  glDeleteShader(vs);
-  glDeleteShader(fs);
-
-  GLuint geomVs = compileShader(GL_VERTEX_SHADER, GEOM_VERT_SRC);
-  GLuint geomFs = compileShader(GL_FRAGMENT_SHADER, GEOM_FRAG_SRC); // bez zmian, nie uzywa wspolnej logiki
-  GLuint geomProg = linkProgram(geomVs, geomFs);
-  glDeleteShader(geomVs);
-  glDeleteShader(geomFs);
-
-  GLuint lightVs = compileShader(GL_VERTEX_SHADER, LIGHT_VERT_SRC);
-  std::string lightFragFullSrc = buildFragSource(LIGHT_FRAG_SRC);
-  GLuint lightFs = compileShader(GL_FRAGMENT_SHADER, lightFragFullSrc.c_str());
-  GLuint lightProg = linkProgram(lightVs, lightFs);
-  glDeleteShader(lightVs);
-  glDeleteShader(lightFs);
-
-  printf("[MAIN] Shadery skompilowane, wchodze do loadWorldSubMeshesFromZen...\n"); fflush(stdout);
-
-  GLint locLightPos   = glGetUniformLocation(lightProg, "uLightPos");
-  GLint locLightColor = glGetUniformLocation(lightProg, "uLightColor");
-  GLint locRange      = glGetUniformLocation(lightProg, "uRange");
+    if (worldMode)
+    {
+        worldVobs = loadVobsFromZen(zenPath);
+    }
 
 
-  GLuint quadVao = makeFullscreenQuad();
+    if(!worldMode)
+    {
+        // brak swiatla z ZEN - dodajemy jeden wpis reprezentujacy swiatlo demo.
+        // Jego pos/range/color/rSource beda aktualizowane co klatke z aktualnego
+        // presetu (klawisze 1-6, M, -/=), wiec tu wpisujemy tylko wartosci startowe.
+        LoadedLight demo;
+        demo.pos     = {0.f, 120.f, 0.f};
+        demo.range   = PRESETS[g_presetIdx].range;
+        demo.color   = PRESETS[g_presetIdx].color;
+        demo.preset  = PRESETS[g_presetIdx].name;
+        worldLights.push_back(demo);
+    }
 
-// gbufor inicjujemy dopiero w petli (znamy tam fbw/fbh), patrz ensureSize() nizej
+    TextureCache texCache;
+    texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/", texSource);
+    std::vector<SubMesh> worldSubMeshes;
 
-auto makeVao = [](const std::vector<Vertex>& verts) {
-    GLuint vao, vbo;
+    glm::vec3 camStart;
 
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
+    if(!glfwInit()) { fprintf(stderr, "glfwInit failed\n"); return 1; }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    glBindVertexArray(vao);
+    GLFWwindow* win = glfwCreateWindow(1280, 720, "lighttest", nullptr, nullptr);
+    if(!win) { fprintf(stderr, "glfwCreateWindow failed\n"); glfwTerminate(); return 1; }
+    glfwMakeContextCurrent(win);
+    glfwSwapInterval(1);
+    glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetKeyCallback(win, keyCallback);
+    glfwSetCursorPosCallback(win, cursorCallback);
 
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        verts.size() * sizeof(Vertex),
-        verts.data(),
-        GL_STATIC_DRAW
+    glEnable(GL_DEPTH_TEST);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& imguiIo = ImGui::GetIO(); (void)imguiIo;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(win, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+    g_currentWorld = worldIdFromZen(zenPath);
+    loadFavorites();
+    printf("[FAVORITES] Aktualny swiat: %s (wpisow lacznie w pliku: %zu)\n",
+        g_currentWorld.c_str(), g_favorites.size());
+
+    if (worldMode)
+    {
+        loadAllVobMeshes(worldVobs);
+    }
+
+    printf("[MAIN] Zaczynam kompilacje shaderow...\n"); fflush(stdout);
+
+    GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
+    std::string fragFullSrc = buildFragSource(FRAG_SRC);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());
+    GLuint prog = linkProgram(vs, fs);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLuint geomVs = compileShader(GL_VERTEX_SHADER, GEOM_VERT_SRC);
+    GLuint geomFs = compileShader(GL_FRAGMENT_SHADER, GEOM_FRAG_SRC); // bez zmian, nie uzywa wspolnej logiki
+    GLuint geomProg = linkProgram(geomVs, geomFs);
+    glDeleteShader(geomVs);
+    glDeleteShader(geomFs);
+
+    GLuint lightVs = compileShader(GL_VERTEX_SHADER, LIGHT_VERT_SRC);
+    std::string lightFragFullSrc = buildFragSource(LIGHT_FRAG_SRC);
+    GLuint lightFs = compileShader(GL_FRAGMENT_SHADER, lightFragFullSrc.c_str());
+    GLuint lightProg = linkProgram(lightVs, lightFs);
+    glDeleteShader(lightVs);
+    glDeleteShader(lightFs);
+
+    printf("[MAIN] Shadery skompilowane, wchodze do loadWorldSubMeshesFromZen...\n"); fflush(stdout);
+
+    GLint locLightPos   = glGetUniformLocation(lightProg, "uLightPos");
+    GLint locLightColor = glGetUniformLocation(lightProg, "uLightColor");
+    GLint locRange      = glGetUniformLocation(lightProg, "uRange");
+
+
+    GLuint quadVao = makeFullscreenQuad();
+
+    // gbufor inicjujemy dopiero w petli (znamy tam fbw/fbh), patrz ensureSize() nizej
+
+    auto makeVao = [](const std::vector<Vertex>& verts) {
+        GLuint vao, vbo;
+
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+
+        glBindVertexArray(vao);
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            verts.size() * sizeof(Vertex),
+            verts.data(),
+            GL_STATIC_DRAW
+        );
+
+        glVertexAttribPointer(
+            0, 3, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex),
+            (void*)offsetof(Vertex, pos)
+        );
+        glEnableVertexAttribArray(0);
+
+        glVertexAttribPointer(
+            1, 3, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex),
+            (void*)offsetof(Vertex, normal)
+        );
+        glEnableVertexAttribArray(1);
+
+        glVertexAttribPointer(
+            2, 2, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex),
+            (void*)offsetof(Vertex, uv)
+        );
+        glEnableVertexAttribArray(2);
+
+        glBindVertexArray(0);
+
+        return vao;
+    };
+
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t2 = std::chrono::high_resolution_clock::now();
+    auto t3 = std::chrono::high_resolution_clock::now();
+    if(worldMode) //to jest false jeśli nie na świateł w pliku zen
+    {
+        worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, texCache);
+
+        t1 = std::chrono::high_resolution_clock::now();
+        printf("[LOG] Wczytanie ZEN z dysku: %.2f ms\n",
+            std::chrono::duration<float, std::milli>(t1 - t0).count());
+
+        printf("[LOG] Utworzono %zu podsiatek świata\n",
+            worldSubMeshes.size());
+
+        t2 = std::chrono::high_resolution_clock::now();
+
+        glm::vec3 centroid(0.f);
+        for(auto& l : worldLights) centroid += l.pos;
+        centroid /= float(worldLights.size());
+
+        glm::vec3 startPos;
+        bool hasStart = findStartPointFromZen(zenPath, startPos);
+        if(hasStart) {
+        camStart   = startPos + glm::vec3(0.f, 80.f, 0.f); // +80 = orientacyjna wysokosc oczu nad stopami
+        g_cam.pos  = camStart;
+        }
+        else {
+        camStart  = centroid + glm::vec3(0.f, 400.f, 800.f);
+        g_cam.pos = camStart;
+        }
+        glm::vec3 dir = glm::normalize(centroid-camStart);
+        g_cam.pitch = glm::degrees(asin(dir.y));
+        g_cam.yaw   = glm::degrees(atan2(dir.z, dir.x));
+    }
+    else //brak świateł w pliku ZEN lub nawet pliku dodajmey nasz sztuczny prosty świat
+    {
+        //  Tworzenie sztucznego pokoju w trybie demo w identycznej strukturze SubMesh
+        std::vector<Vertex> roomVerts = buildRoom();
+        SubMesh demoMesh;
+        demoMesh.vertexCount = roomVerts.size();
+        demoMesh.fallbackColor = glm::vec3(0.6f, 0.6f, 0.62f);
+        demoMesh.texture.valid = false; // Brak tekstury - shader użyje fallbackColor
+
+        demoMesh.vao = makeVao(roomVerts);
+        worldSubMeshes.push_back(demoMesh);
+    }
+
+    std::vector<Vertex> markerVerts;
+    //Boxy dla źródeł światła
+    addBox(markerVerts, {0,0,0}, {10,10,10});
+    GLuint markerVao = makeVao(markerVerts);
+
+    std::vector<Vertex> objectMarkerVerts;
+    addBox(
+        objectMarkerVerts,
+        {0, 0, 0},
+        {5, 5, 5}
     );
 
-    glVertexAttribPointer(
-        0, 3, GL_FLOAT, GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, pos)
-    );
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(
-        1, 3, GL_FLOAT, GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, normal)
-    );
-    glEnableVertexAttribArray(1);
-
-    glVertexAttribPointer(
-        2, 2, GL_FLOAT, GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, uv)
-    );
-    glEnableVertexAttribArray(2);
-
-    glBindVertexArray(0);
-
-    return vao;
-};
+    GLuint objectMarkerVao = makeVao(objectMarkerVerts);
 
 
-  auto t0 = std::chrono::high_resolution_clock::now();
-  auto t1 = std::chrono::high_resolution_clock::now();
-  auto t2 = std::chrono::high_resolution_clock::now();
-  auto t3 = std::chrono::high_resolution_clock::now();
-  if(worldMode) //to jest false jeśli nie na świateł w pliku zen
-  {
-    worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, texCache);
+    std::vector<size_t> visibleLightIndices;
+    visibleLightIndices.reserve(worldLights.size());
 
-    t1 = std::chrono::high_resolution_clock::now();
-    printf("[LOG] Wczytanie ZEN z dysku: %.2f ms\n",
-           std::chrono::duration<float, std::milli>(t1 - t0).count());
+    std::vector<Vertex> bboxVerts = buildUnitBBox();
+    GLuint bboxVao = makeVao(bboxVerts);
 
-    printf("[LOG] Utworzono %zu podsiatek świata\n",
-           worldSubMeshes.size());
-
-    t2 = std::chrono::high_resolution_clock::now();
-
-    glm::vec3 centroid(0.f);
-    for(auto& l : worldLights) centroid += l.pos;
-    centroid /= float(worldLights.size());
-
-    glm::vec3 startPos;
-    bool hasStart = findStartPointFromZen(zenPath, startPos);
-    if(hasStart) {
-      camStart   = startPos + glm::vec3(0.f, 80.f, 0.f); // +80 = orientacyjna wysokosc oczu nad stopami
-      g_cam.pos  = camStart;
-      }
-    else {
-      camStart  = centroid + glm::vec3(0.f, 400.f, 800.f);
-      g_cam.pos = camStart;
-      }
-    glm::vec3 dir = glm::normalize(centroid-camStart);
-    g_cam.pitch = glm::degrees(asin(dir.y));
-    g_cam.yaw   = glm::degrees(atan2(dir.z, dir.x));
-  }
-  else //brak świateł w pliku ZEN lub nawet pliku dodajmey nasz sztuczny prosty świat
-  {
-    //  Tworzenie sztucznego pokoju w trybie demo w identycznej strukturze SubMesh
-    std::vector<Vertex> roomVerts = buildRoom();
-    SubMesh demoMesh;
-    demoMesh.vertexCount = roomVerts.size();
-    demoMesh.fallbackColor = glm::vec3(0.6f, 0.6f, 0.62f);
-    demoMesh.texture.valid = false; // Brak tekstury - shader użyje fallbackColor
-
-    demoMesh.vao = makeVao(roomVerts);
-    worldSubMeshes.push_back(demoMesh);
-  }
-
-  std::vector<Vertex> markerVerts;
-  //Boxy dla źródeł światła
-  addBox(markerVerts, {0,0,0}, {10,10,10});
-  GLuint markerVao = makeVao(markerVerts);
-
-  std::vector<Vertex> objectMarkerVerts;
-  addBox(
-      objectMarkerVerts,
-      {0, 0, 0},
-      {5, 5, 5}
-  );
-
-  GLuint objectMarkerVao = makeVao(objectMarkerVerts);
+    // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
+    // std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
+    // std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
+    // std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
+    std::vector<FogBuffer> fogPerLight(worldLights.size());
 
 
-  std::vector<size_t> visibleLightIndices;
-  visibleLightIndices.reserve(worldLights.size());
+    t3 = std::chrono::high_resolution_clock::now();
+    printf("[LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).\n");
 
-  std::vector<Vertex> bboxVerts = buildUnitBBox();
-  GLuint bboxVao = makeVao(bboxVerts);
+    // t3 = std::chrono::high_resolution_clock::now();
+    // printf("[LOG] Czas generowania mgły: %.2f ms\n", 
+    //       std::chrono::duration<float, std::milli>(t3 - t2).count());
+    glEnable(GL_PROGRAM_POINT_SIZE);
 
-  // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
-  // std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
-  // std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
-  // std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
-  std::vector<FogBuffer> fogPerLight(worldLights.size());
+    TextRenderer text;
+    text.init();
 
+    glm::vec3 demoLightPos = {0.f, 120.f, 0.f}; // swiatlo na srodku pokoju (tryb demo)
 
-  t3 = std::chrono::high_resolution_clock::now();
-  printf("[LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).\n");
-
-  // t3 = std::chrono::high_resolution_clock::now();
-  // printf("[LOG] Czas generowania mgły: %.2f ms\n", 
-  //       std::chrono::duration<float, std::milli>(t3 - t2).count());
-  glEnable(GL_PROGRAM_POINT_SIZE);
-
-  TextRenderer text;
-  text.init();
-
-  glm::vec3 demoLightPos = {0.f, 120.f, 0.f}; // swiatlo na srodku pokoju (tryb demo)
-
-  double lastTime = glfwGetTime();
-  float  g_fpsSmoothed = 0.f;
+    double lastTime = glfwGetTime();
+    float  g_fpsSmoothed = 0.f;
 
   while(!glfwWindowShouldClose(win)) 
   {

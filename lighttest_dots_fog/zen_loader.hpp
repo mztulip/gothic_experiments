@@ -260,24 +260,19 @@ static void walkVobs(
             obj.visualName =
                 vob->visual->name;
 
-            if (
-                vob->visual->type ==
-                    zenkit::VisualType::MESH ||
-                vob->visual->type ==
-                    zenkit::VisualType::MULTI_RESOLUTION_MESH
-            )
+            if (vob->visual->type == zenkit::VisualType::MESH ||
+                vob->visual->type == zenkit::VisualType::MULTI_RESOLUTION_MESH)
             {
+                std::string gothicDir = getGothicDir();
+
                 if (!gothicDir.empty())
                 {
-                    obj.meshPath =
-                        findMeshFile(
-                            gothicDir,
-                            obj.visualName
-                        );
-
-                    obj.meshLoaded =
-                        !obj.meshPath.empty();
+                    obj.meshPath = findMeshFile(gothicDir, obj.visualName); // moze byc puste - OK
                 }
+
+                // meshLoaded = "ten VOB POWINIEN miec mesh", niezaleznie od zrodla (3ds czy MRM).
+                // Realna proba wczytania (i ewentualny fail) dzieje sie w createVobMeshGL.
+                obj.meshLoaded = true;
             }
         }
         if (vob->show_visual)

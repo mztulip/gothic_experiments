@@ -50,6 +50,9 @@ static bool loadMrmMesh(
         return false;
     }
 
+    printf("[LOAD MRM] Parsowanie: %s (VOB: %s)\n", mrmName.c_str(), visualName.c_str());
+    fflush(stdout);
+
     zenkit::MultiResolutionMesh mrm;
 
     try
@@ -100,6 +103,9 @@ static bool loadMrmMesh(
         printf("[MRM] Pusty mesh po sparsowaniu: %s\n", mrmName.c_str());
         return false;
     }
+
+    printf("[LOAD MRM]   -> %zu wierzcholkow, %zu submeshy\n", outVerts.size(), mrm.sub_meshes.size());
+    fflush(stdout);
 
     return true;
 }
