@@ -1,7 +1,6 @@
 /*
   https://www.worldofgothic.de/?go=moddb&action=view&fileID=994&cat=18
   export GOTHIC2_DIR=/home/mz/.wine/drive_c/Program\ Files\ \(x86\)/JoWood/Gothic\ II/
-
   export GOTHIC2_DIR=/home/mz/JoWood/Gothic\ II/
   ./lighttest "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/_Work/Data/Worlds/HELMS.ZEN"
   ./lighttest /home/mz/.wine/drive_c/Program\ Files\ \(x86\)/JoWood/Gothic\ II/_Work/Data/Worlds/OLDWORLD/OLDWORLD.ZEN

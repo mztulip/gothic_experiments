@@ -387,7 +387,7 @@ static bool createVobMeshGL(LoadedVob& vob)
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
 
-        if (!loadMrmMesh(vfs, vob.visualName, verts))
+        if (!loadMrmMesh(vfs, gothicDir, vob.visualName, verts))
         {
             printf("Nie udalo sie zaladowac MRM: %s\n", vob.visualName.c_str());
             vob.meshLoaded = false;

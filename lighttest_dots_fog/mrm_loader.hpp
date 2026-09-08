@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 
 // Vertex jest juz zdefiniowany w zen_loader.hpp (pos, normal, uv) -
 // ten plik musi byc dolaczony PO zen_loader.hpp.
@@ -35,6 +36,7 @@ static std::string toMrmName(const std::string& visualName)
 // ---------------------------------------------------------------------
 static bool loadMrmMesh(
     zenkit::Vfs& vfs,
+    const std::string& gothicDir,
     const std::string& visualName,
     std::vector<Vertex>& outVerts)
 {
@@ -43,27 +45,53 @@ static bool loadMrmMesh(
 
     std::string mrmName = toMrmName(visualName);
 
-    const zenkit::VfsNode* node = vfs.find(mrmName);
-    if (node == nullptr)
-    {
-        printf("[MRM] Nie znaleziono w VFS: %s\n", mrmName.c_str());
-        return false;
-    }
+    // --- Priorytet 1: pliki na dysku w _Work/Data/Meshes/_compiled ---
+    // (dokladnie tak jak robi to prawdziwy silnik - dysk nadpisuje VDF)
+    namespace fs = std::filesystem;
+    fs::path diskPath = fs::path(gothicDir) / "_Work" / "Data" / "Meshes" / "_compiled" / mrmName;
 
-    printf("[LOAD MRM] Parsowanie: %s (VOB: %s)\n", mrmName.c_str(), visualName.c_str());
-    fflush(stdout);
-
+    std::unique_ptr<zenkit::Read> reader;
     zenkit::MultiResolutionMesh mrm;
 
-    try
+     if (fs::exists(diskPath))
     {
-        auto reader = node->open_read();
-        mrm.load(reader.get());
+        printf("[LOAD MRM] (dysk) Parsowanie: %s (VOB: %s)\n", diskPath.string().c_str(), visualName.c_str());
+        fflush(stdout);
+
+        try
+        {
+            reader = zenkit::Read::from(diskPath.string());
+            mrm.load(reader.get());
+        }
+        catch (const std::exception& e)
+        {
+            printf("[MRM] Blad parsowania z dysku %s: %s\n", diskPath.string().c_str(), e.what());
+            return false;
+        }
     }
-    catch (const std::exception& e)
+    else
     {
-        printf("[MRM] Blad parsowania %s: %s\n", mrmName.c_str(), e.what());
-        return false;
+        // --- Priorytet 2: VFS (zamontowane VDF-y) ---
+        const zenkit::VfsNode* node = vfs.find(mrmName);
+        if (node == nullptr)
+        {
+            printf("[MRM] Nie znaleziono ani na dysku, ani w VFS: %s\n", mrmName.c_str());
+            return false;
+        }
+
+        printf("[LOAD MRM] (VDF) Parsowanie: %s (VOB: %s)\n", mrmName.c_str(), visualName.c_str());
+        fflush(stdout);
+
+        try
+        {
+            reader = node->open_read();
+            mrm.load(reader.get());
+        }
+        catch (const std::exception& e)
+        {
+            printf("[MRM] Blad parsowania %s: %s\n", mrmName.c_str(), e.what());
+            return false;
+        }
     }
 
     outVerts.clear();
