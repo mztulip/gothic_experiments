@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ZENKIT_DIR="$(realpath "$SCRIPT_DIR/../ZenKit")"
 ZENKIT_BUILD_DIR="$ZENKIT_DIR/build"
+ZENKIT_LIB="$ZENKIT_BUILD_DIR/libzenkit.a"     # placeholder, doprecyzowane po buildzie
+SQUISH_LIB="$ZENKIT_BUILD_DIR/vendor/libsquish/libsquish.a"  # placeholder
 
 IMGUI_DIR="$(realpath "$SCRIPT_DIR/../imgui")"
 IMGUI_BUILD_DIR="$SCRIPT_DIR/.imgui_build"
@@ -30,7 +32,9 @@ fi
 # ZenKit - buduj tylko jesli biblioteki jeszcze nie istnieja, albo
 # jesli jawnie zazadano przebudowy przez --rebuild-zenkit
 # ------------------------------------------------------------------
-if [[ "$REBUILD_ZENKIT" == "1" || ! -f "$ZENKIT_LIB" || ! -f "$SQUISH_LIB" ]]; then
+ZENKIT_FLAGS_FILE="$ZENKIT_BUILD_DIR/CMakeFiles/zenkit.dir/flags.make"
+
+if [[ "$REBUILD_ZENKIT" == "1" || ! -f "$ZENKIT_LIB" || ! -f "$SQUISH_LIB" || ! -f "$ZENKIT_FLAGS_FILE" ]]; then
   echo "=========================================="
   echo " Building ZenKit"
   echo "=========================================="
@@ -85,6 +89,22 @@ if [[ ! -f "$SQUISH_LIB" ]]; then
   echo "ERROR: Nie znaleziono:"
   echo "  $SQUISH_LIB"
   exit 1
+fi
+
+# ------------------------------------------------------------------
+# Wyciagamy DOKLADNIE te same -D... co uzyl CMake do zbudowania
+# libzenkit.a, zeby main.cpp mial identyczne ABI (ten sam layout
+# klas jak w #ifdef _ZK_WITH_MMAP itp.) - zamiast recznie
+# duplikowac flagi, ktore moga sie rozjechac przy zmianie configu.
+# ------------------------------------------------------------------
+ZENKIT_FLAGS_FILE="$ZENKIT_BUILD_DIR/CMakeFiles/zenkit.dir/flags.make"
+ZENKIT_DEFINES=""
+
+if [[ -f "$ZENKIT_FLAGS_FILE" ]]; then
+  ZENKIT_DEFINES="$(grep '^CXX_DEFINES' "$ZENKIT_FLAGS_FILE" | sed 's/^CXX_DEFINES *= *//')"
+  echo "Wykryte definicje z ZenKit: $ZENKIT_DEFINES"
+else
+  echo "OSTRZEZENIE: nie znaleziono $ZENKIT_FLAGS_FILE - definicje ABI moga sie nie zgadzac!"
 fi
 
 # ------------------------------------------------------------------
@@ -151,7 +171,7 @@ build_program() {
   echo "=========================================="
 
   "$CXX" -std=c++20 -g -fsanitize=address -fno-omit-frame-pointer  $UTF8_FLAGS "$src" \
-    -D_ZK_WITH_MMAP=1 \
+    $ZENKIT_DEFINES \
     -I"$ZENKIT_DIR/include" \
     -I"$ZENKIT_DIR/vendor/glm" \
     $IMGUI_INCLUDES \

@@ -526,6 +526,10 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
         const auto& fidx = mesh.polygons.feature_indices;
         const auto& midx = mesh.polygons.material_indices;
 
+        printf("[WORLD] Wczytano ZEN. Poligonow: %zu, wierzcholkow: %zu, materialow: %zu\n",
+            mesh.polygons.material_indices.size(), mesh.vertices.size(), mesh.materials.size());
+        fflush(stdout);
+
         if (vidx.size() != fidx.size() ||
             vidx.size() % 3 != 0 ||
             midx.size() != vidx.size() / 3)
@@ -573,6 +577,12 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
             pushVertex(i + 1);
         }
 
+        size_t doneGroups = 0;
+        size_t totalGroups = groupedVerts.size();
+        printf("[WORLD] Grup materialowych do przetworzenia: %zu\n", totalGroups);
+        fflush(stdout);
+
+
         for (auto& [matIdx, verts] : groupedVerts)
         {
             if (verts.empty()) continue;
@@ -605,6 +615,12 @@ static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, T
 
             glBindVertexArray(0);
             submeshes.push_back(sm);
+
+            ++doneGroups;
+            if (doneGroups % 50 == 0 || doneGroups == totalGroups) {
+                printf("[WORLD] Grupy: %zu / %zu\n", doneGroups, totalGroups);
+                fflush(stdout);
+            }
         }
     }
     catch (const std::exception& e)

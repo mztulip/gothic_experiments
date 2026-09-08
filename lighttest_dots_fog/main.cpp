@@ -35,6 +35,7 @@
 #include "geometry_room.hpp"
 #include "favorites.hpp"
 #include "vfs_loader.hpp"
+#include "frustrum.hpp"  
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -149,7 +150,7 @@ static float effectiveLightRange(const LoadedLight& l)
 }
 
 static void drawVobMarkers(
-    const std::vector<LoadedVob>& vobs,
+    const std::vector<const LoadedVob*>& vobs,
     GLuint prog,
     GLuint vao,
     size_t vertexCount)
@@ -157,8 +158,10 @@ static void drawVobMarkers(
     glUniform1i(glGetUniformLocation(prog, "uIsMarker"), 1);
     glBindVertexArray(vao);
 
-    for(const auto& obj : vobs)
+    for(const auto* objPtr : vobs)
     {
+
+        auto& obj = *objPtr;
         if (obj.meshLoaded)
           continue;
 
@@ -191,7 +194,7 @@ static void drawVobMarkers(
 }
 
 static void drawVobLabels(
-    const std::vector<LoadedVob>& vobs,
+    const std::vector<const LoadedVob*>& vobs,
     TextRenderer& text,
     const Camera& cam,
     const glm::mat4& view,
@@ -200,8 +203,9 @@ static void drawVobLabels(
     int fbw,
     int fbh)
 {
-    for(const auto& obj : vobs)
+    for(const auto* objPtr : vobs)
     {
+        const auto& obj = *objPtr;
         if(!isVobInView(
             obj.pos,
             cam,
@@ -641,7 +645,7 @@ static void drawImGuiControls(GLFWwindow* win, bool worldMode)
 }
 
 static void drawVobsToGBuffer(
-    const std::vector<LoadedVob>& vobs,
+    const std::vector<const LoadedVob*>& vobs,
     GLuint geomProg,
     GLint locModel,
     GLint locHasTex,
@@ -649,8 +653,9 @@ static void drawVobsToGBuffer(
 {
     const glm::vec3 vobFallbackColor(0.45f, 0.45f, 0.5f); //szary
 
-    for (const auto& obj : vobs)
+    for (const auto* objPtr : vobs)
     {
+        auto& obj = *objPtr;
         if (!obj.meshLoaded)
             continue;
 
@@ -673,7 +678,7 @@ static void drawVobsToGBuffer(
 int main(int argc, char** argv)
 {
   std::string zenPath;
-  TextureSource texSource = TextureSource::Both;
+  TextureSource texSource = TextureSource::GothicOnly;
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -809,6 +814,8 @@ int main(int argc, char** argv)
             g_vobMeshCache.size());
   }
 
+  printf("[MAIN] Zaczynam kompilacje shaderow...\n"); fflush(stdout);
+
   GLuint vs = compileShader(GL_VERTEX_SHADER, VERT_SRC);
   std::string fragFullSrc = buildFragSource(FRAG_SRC);
   GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragFullSrc.c_str());
@@ -828,6 +835,8 @@ int main(int argc, char** argv)
   GLuint lightProg = linkProgram(lightVs, lightFs);
   glDeleteShader(lightVs);
   glDeleteShader(lightFs);
+
+  printf("[MAIN] Shadery skompilowane, wchodze do loadWorldSubMeshesFromZen...\n"); fflush(stdout);
 
   GLint locLightPos   = glGetUniformLocation(lightProg, "uLightPos");
   GLint locLightColor = glGetUniformLocation(lightProg, "uLightColor");
@@ -1035,6 +1044,17 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     glUniform1f(glGetUniformLocation(prog,"uPointSizeBase"), g_fogPointSize);
     glUniform1f(glGetUniformLocation(prog,"uFogDensity"), g_fogDensity);
 
+    Frustum camFrustum = Frustum::fromMatrix(proj * view);
+    static std::vector<const LoadedVob*> visibleVobs;
+    visibleVobs.clear();
+    visibleVobs.reserve(worldVobs.size());
+
+    for (const auto& obj : worldVobs)
+    {
+        if (camFrustum.intersectsAABB(obj.bboxMin, obj.bboxMax))
+            visibleVobs.push_back(&obj);
+    }
+
     // ============================================================
     // PASS 1: geometria swiata - RAZ, do G-bufora
     // ============================================================
@@ -1077,7 +1097,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
         glDrawArrays(GL_TRIANGLES, 0, GLsizei(sm.vertexCount));
     }
 
-    drawVobsToGBuffer(worldVobs, geomProg, glGetUniformLocation(geomProg, "uModel"), locHasTex, locAlbedo);
+    drawVobsToGBuffer(visibleVobs, geomProg, glGetUniformLocation(geomProg, "uModel"), locHasTex, locAlbedo);
 
     glBindVertexArray(0);
 
@@ -1333,7 +1353,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
 
 
     drawVobMarkers(
-        worldVobs,
+        visibleVobs,
         prog,
         objectMarkerVao,
         objectMarkerVerts.size()
@@ -1365,7 +1385,7 @@ auto makeVao = [](const std::vector<Vertex>& verts) {
     );
 
     drawVobLabels(
-      worldVobs,
+      visibleVobs,
       text,
       g_cam,
       view,
