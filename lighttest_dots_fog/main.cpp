@@ -36,6 +36,7 @@
 #include "favorites.hpp"
 #include "vfs_loader.hpp"
 #include "frustrum.hpp"  
+#include "mrm_loader.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -79,6 +80,9 @@ static bool  g_texturesEnabled = true;
 static float g_fogPointSize  = 4.f;
 static bool g_lightCorrectionChanged = false;
 static bool g_showVobBBoxes = false;
+
+enum class MeshSource { ThreeDS, MRM };
+static MeshSource g_meshSource = MeshSource::MRM; // zmien na MeshSource::MRM zeby przelaczyc
 
 
 
@@ -358,7 +362,7 @@ static bool createVobMeshGL(LoadedVob& vob)
     if (!vob.meshLoaded)
         return false;
 
-    auto cacheIt = g_vobMeshCache.find(vob.meshPath);
+    auto cacheIt = g_vobMeshCache.find(vob.visualName);
     if (cacheIt != g_vobMeshCache.end())
     {
         if (cacheIt->second.vao == 0)
@@ -373,195 +377,111 @@ static bool createVobMeshGL(LoadedVob& vob)
         return true;
     }
 
-    printf("[LOAD 3DS] Parsowanie: %s (VOB: %s)\n", vob.meshPath.c_str(), vob.visualName.c_str());
-    fflush(stdout); // Wymuś natychmiastowe wypisanie w terminalu
-
-    Mesh3DS mesh;
-
-    if (!Loader3DS::load(vob.meshPath, mesh))
-    {
-        printf(
-            "Nie udalo sie zaladowac VOB mesh: %s\n",
-            vob.meshPath.c_str()
-        );
-
-        vob.meshLoaded = false;
-        return false;
-    }
-
-    glm::vec3 size = mesh.maxBounds - mesh.minBounds;
-    float maxDim = std::max(size.x, std::max(size.y, size.z));
-
-  if (maxDim > 3000.f)
-  {
-      printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
-            vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
-            mesh.vertices.size(), mesh.faces.size());
-  }
-
-    vob.meshLocalTransform = mesh.localTransform;
-
     std::vector<Vertex> verts;
-    verts.reserve(mesh.faces.size() * 3);
 
     // ------------------------------------------------------------
-    // FLAT SHADING
-    //
-    // Każdy face dostaje własne 3 wierzchołki.
-    // Wszystkie trzy mają tę samą normalną.
+    // Zrodlo geometrii - przelaczane przez g_meshSource
     // ------------------------------------------------------------
-    for (const auto& face : mesh.faces)
+    if (g_meshSource == MeshSource::MRM)
     {
-        if (face.a >= mesh.vertices.size() ||
-          face.b >= mesh.vertices.size() ||
-          face.c >= mesh.vertices.size())
+        std::string gothicDir = getGothicDir();
+        auto& vfs = gothicVfs(gothicDir);
+
+        if (!loadMrmMesh(vfs, vob.visualName, verts))
         {
-            continue; // pomijamy uszkodzony trojkat zamiast czytac smieci
+            printf("Nie udalo sie zaladowac MRM: %s\n", vob.visualName.c_str());
+            vob.meshLoaded = false;
+            g_vobMeshCache[vob.visualName] = { 0, 0, 0 }; // negatywny cache - nie probuj ponownie
+            return false;
         }
-        glm::vec3 p[3];
+    }
+    else // MeshSource::ThreeDS
+    {
+        printf("[LOAD 3DS] Parsowanie: %s (VOB: %s)\n", vob.meshPath.c_str(), vob.visualName.c_str());
+        fflush(stdout);
 
-        p[0] = glm::vec3(
-            mesh.vertices[face.a].x,
-            mesh.vertices[face.a].y,
-            mesh.vertices[face.a].z
-        );
+        Mesh3DS mesh;
 
-        p[1] = glm::vec3(
-            mesh.vertices[face.b].x,
-            mesh.vertices[face.b].y,
-            mesh.vertices[face.b].z
-        );
+        if (!Loader3DS::load(vob.meshPath, mesh))
+        {
+            printf("Nie udalo sie zaladowac VOB mesh: %s\n", vob.meshPath.c_str());
+            vob.meshLoaded = false;
+            g_vobMeshCache[vob.visualName] = { 0, 0, 0 };
+            return false;
+        }
 
-        p[2] = glm::vec3(
-            mesh.vertices[face.c].x,
-            mesh.vertices[face.c].y,
-            mesh.vertices[face.c].z
-        );
+        glm::vec3 size = mesh.maxBounds - mesh.minBounds;
+        float maxDim = std::max(size.x, std::max(size.y, size.z));
 
-        // Normalna ściany.
-        glm::vec3 normal =
-            glm::normalize(
-                glm::cross(
-                    p[1] - p[0],
-                    p[2] - p[0]
-                )
-            );
+        if (maxDim > 3000.f)
+        {
+            printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
+                   vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
+                   mesh.vertices.size(), mesh.faces.size());
+        }
 
-        // printf(
-        //     "VOB FACE NORMAL: %.3f %.3f %.3f\n",
-        //     normal.x,
-        //     normal.y,
-        //     normal.z
-        // );
+        vob.meshLocalTransform = mesh.localTransform;
 
+        verts.reserve(mesh.faces.size() * 3);
 
-        verts.push_back({
-            p[0],
-            normal,
-            glm::vec2(0.0f)
-        });
+        // FLAT SHADING - kazdy face dostaje wlasne 3 wierzcholki z ta sama normalna.
+        for (const auto& face : mesh.faces)
+        {
+            if (face.a >= mesh.vertices.size() ||
+                face.b >= mesh.vertices.size() ||
+                face.c >= mesh.vertices.size())
+            {
+                continue;
+            }
 
-        verts.push_back({
-            p[1],
-            normal,
-            glm::vec2(0.0f)
-        });
+            glm::vec3 p[3];
+            p[0] = glm::vec3(mesh.vertices[face.a].x, mesh.vertices[face.a].y, mesh.vertices[face.a].z);
+            p[1] = glm::vec3(mesh.vertices[face.b].x, mesh.vertices[face.b].y, mesh.vertices[face.b].z);
+            p[2] = glm::vec3(mesh.vertices[face.c].x, mesh.vertices[face.c].y, mesh.vertices[face.c].z);
 
-        verts.push_back({
-            p[2],
-            normal,
-            glm::vec2(0.0f)
-        });
+            glm::vec3 normal = glm::normalize(glm::cross(p[1] - p[0], p[2] - p[0]));
+
+            verts.push_back({ p[0], normal, glm::vec2(0.0f) });
+            verts.push_back({ p[1], normal, glm::vec2(0.0f) });
+            verts.push_back({ p[2], normal, glm::vec2(0.0f) });
+        }
     }
 
     if (verts.empty())
     {
         vob.meshLoaded = false;
+        g_vobMeshCache[vob.visualName] = { 0, 0, 0 };
         return false;
     }
 
     // ------------------------------------------------------------
-    // GPU
+    // GPU - wspolne dla obu zrodel
     // ------------------------------------------------------------
-
     glGenVertexArrays(1, &vob.meshVao);
     glGenBuffers(1, &vob.meshVbo);
 
     glBindVertexArray(vob.meshVao);
 
-    glBindBuffer(
-        GL_ARRAY_BUFFER,
-        vob.meshVbo
-    );
+    glBindBuffer(GL_ARRAY_BUFFER, vob.meshVbo);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
 
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        verts.size() * sizeof(Vertex),
-        verts.data(),
-        GL_STATIC_DRAW
-    );
-
-    // ------------------------------------------------------------
-    // POSITION - location 0
-    // ------------------------------------------------------------
-
-    glVertexAttribPointer(
-        0,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, pos)
-    );
-
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
     glEnableVertexAttribArray(0);
 
-    // ------------------------------------------------------------
-    // NORMAL - location 1
-    // ------------------------------------------------------------
-
-    glVertexAttribPointer(
-        1,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, normal)
-    );
-
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
     glEnableVertexAttribArray(1);
 
-    // ------------------------------------------------------------
-    // UV - location 2
-    // ------------------------------------------------------------
-
-    glVertexAttribPointer(
-        2,
-        2,
-        GL_FLOAT,
-        GL_FALSE,
-        sizeof(Vertex),
-        (void*)offsetof(Vertex, uv)
-    );
-
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
     glEnableVertexAttribArray(2);
 
     glBindVertexArray(0);
 
-    vob.meshVertexCount =
-        verts.size();
+    vob.meshVertexCount = verts.size();
 
-    g_vobMeshCache[vob.meshPath] = { vob.meshVao, vob.meshVbo, vob.meshVertexCount };
-
-    // printf(
-    //     "VOB MESH GL: %s -> %zu vertices (flat shading)\n",
-    //     vob.visualName.c_str(),
-    //     vob.meshVertexCount
-    // );
+    g_vobMeshCache[vob.visualName] = { vob.meshVao, vob.meshVbo, vob.meshVertexCount };
 
     return true;
 }
-
 
 static glm::mat4 getVobBaseRotation()
 {
