@@ -5,7 +5,11 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <zenkit/Vfs.hh>
+#include <zenkit/MultiResolutionMesh.hh>
+#include <unordered_map>
 
+#include "vfs_loader.hpp"
 #include "texture_loader.h"
 
 #include "imgui.h"
@@ -42,23 +46,46 @@ struct Vertex
     glm::vec3 normal;
 };
 
+static inline glm::vec3 zenPosToGL(float x, float y, float z)
+{
+    // ZenGin jest lewoskretny, OpenGL prawoskretny - negujemy jedna os (X).
+    return glm::vec3(-x, y, z);
+}
+
 struct Face
 {
     uint16_t a, b, c;
+};
+
+struct SubMeshRange
+{
+    std::string textureFile;
+    uint32_t indexStart = 0;
+    uint32_t indexCount  = 0;
 };
 
 struct Mesh3DS
 {
     std::vector<Vertex> vertices;
     std::vector<Face> faces;
-    std::string textureFile;
-    
-    // Bounding Box modelu
+    std::string textureFile; // uzywane przez tryb 3DS (pojedyncza tekstura)
+
+    // Wypelniane tylko w trybie MRM. Jesli puste -> renderujemy caly mesh
+    // jedna tekstura (activeTex), tak jak dotychczas dla 3DS.
+    std::vector<SubMeshRange> submeshes;
+
     glm::vec3 minBounds{0.0f};
     glm::vec3 maxBounds{0.0f};
     glm::vec3 center{0.0f};
     float maxDimension = 1.0f;
 };
+
+static std::string toLowerStr(const std::string& s)
+{
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(), ::tolower);
+    return out;
+}
 
 class Loader3DS
 {
@@ -237,6 +264,134 @@ private:
     }
 };
 
+static bool loadMrmMeshIndexed(zenkit::Vfs& vfs, const std::string& gothicDir,
+                                const std::string& visualName, Mesh3DS& outMesh)
+{
+    if (visualName.empty()) return false;
+
+    std::string mrmName = visualName;
+    {
+        size_t dot = mrmName.find_last_of('.');
+        mrmName = (dot != std::string::npos) ? mrmName.substr(0, dot) + ".MRM" : mrmName + ".MRM";
+    }
+
+    namespace fs = std::filesystem;
+    fs::path diskPath = fs::path(gothicDir) / "_Work" / "Data" / "Meshes" / "_compiled" / mrmName;
+
+    std::unique_ptr<zenkit::Read> reader;
+    zenkit::MultiResolutionMesh mrm;
+
+    try
+    {
+        if (fs::exists(diskPath))
+        {
+            reader = zenkit::Read::from(diskPath.string());
+        }
+        else
+        {
+            const zenkit::VfsNode* node = vfs.find(mrmName);
+            if (!node)
+            {
+                std::cerr << "[MRM] Nie znaleziono: " << mrmName << std::endl;
+                return false;
+            }
+            reader = node->open_read();
+        }
+        mrm.load(reader.get());
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[MRM] Blad parsowania " << mrmName << ": " << e.what() << std::endl;
+        return false;
+    }
+
+    outMesh.vertices.clear();
+    outMesh.faces.clear();
+    outMesh.submeshes.clear();
+
+    std::unordered_map<std::string, uint32_t> uniqueIndex;
+    uniqueIndex.reserve(4096);
+
+    char keyBuf[160];
+    auto keyFor = [&](const Vertex& v) -> std::string
+    {
+        snprintf(keyBuf, sizeof(keyBuf), "%.5f_%.5f_%.5f_%.5f_%.5f_%.5f_%.4f_%.4f",
+                  v.pos.x, v.pos.y, v.pos.z,
+                  v.normal.x, v.normal.y, v.normal.z,
+                  v.uv.x, v.uv.y);
+        return std::string(keyBuf);
+    };
+
+    for (const auto& sub : mrm.sub_meshes)
+    {
+        SubMeshRange range;
+        // TODO(verify): dokladna nazwa pola tekstury w zenkit::SubMesh/Material.
+        // W wiekszosci wersji zenkit to `sub.mat.texture` (std::string).
+        range.textureFile = sub.mat.texture;
+        range.indexStart  = static_cast<uint32_t>(outMesh.faces.size() * 3);
+
+        for (const auto& tri : sub.triangles)
+        {
+            const uint16_t order[3] = { tri.wedges[0], tri.wedges[2], tri.wedges[1] };
+            uint16_t faceIdx[3];
+            bool skip = false;
+
+            for (int k = 0; k < 3; ++k)
+            {
+                uint16_t wIdx = order[k];
+                if (wIdx >= sub.wedges.size()) { skip = true; break; }
+
+                const auto& wedge = sub.wedges[wIdx];
+                if (wedge.index >= mrm.positions.size()) { skip = true; break; }
+
+                const auto& p = mrm.positions[wedge.index];
+
+                Vertex v;
+                v.pos    = zenPosToGL(p.x, p.y, p.z);
+                v.normal = zenPosToGL(wedge.normal.x, wedge.normal.y, wedge.normal.z);
+                v.uv     = glm::vec2(wedge.texture.x, 1.0f - wedge.texture.y);
+
+                std::string key = keyFor(v);
+                auto it = uniqueIndex.find(key);
+                uint32_t vIdx;
+                if (it == uniqueIndex.end())
+                {
+                    vIdx = static_cast<uint32_t>(outMesh.vertices.size());
+                    if (vIdx > 65535)
+                    {
+                        std::cerr << "[MRM] Przekroczono limit 65535 wierzcholkow w: "
+                                  << mrmName << std::endl;
+                        return false;
+                    }
+                    outMesh.vertices.push_back(v);
+                    uniqueIndex.emplace(std::move(key), vIdx);
+                }
+                else vIdx = it->second;
+
+                faceIdx[k] = static_cast<uint16_t>(vIdx);
+            }
+
+            if (skip) continue;
+            outMesh.faces.push_back({ faceIdx[0], faceIdx[1], faceIdx[2] });
+        }
+
+        range.indexCount = static_cast<uint32_t>(outMesh.faces.size() * 3) - range.indexStart;
+        if (range.indexCount > 0)
+            outMesh.submeshes.push_back(range);
+    }
+
+    if (outMesh.vertices.empty())
+    {
+        std::cerr << "[MRM] Pusty mesh: " << mrmName << std::endl;
+        return false;
+    }
+
+    std::cout << "[MRM] " << mrmName << " -> " << outMesh.vertices.size()
+              << " wierzcholkow, " << outMesh.submeshes.size() << " submeshy" << std::endl;
+
+    return true;
+}
+
 // Stan aplikacji
 static float g_yaw = 0.0f;
 static float g_pitch = 15.0f;
@@ -270,6 +425,9 @@ static CameraMode g_cameraMode = CAMERA_ORBIT;
 static glm::vec3 g_fpsCameraPos = glm::vec3(0.0f, 100.0f, 200.0f);
 static float g_flySpeed = 500.0f; // Domyślna prędkość latania
 static bool g_toggleCameraRequested = false;
+
+enum MeshSource { SOURCE_MRM = 0, SOURCE_3DS = 1 };
+static MeshSource g_meshSource = SOURCE_MRM;
 
 void switchCameraMode(CameraMode newMode, const glm::vec3& rotatedCenter)
 {
@@ -464,6 +622,42 @@ void scanGothicDirectory(const std::string& gothicDir)
     std::sort(g_fileList.begin(), g_fileList.end());
 }
 
+void scanGothicDirectoryMRM(const std::string& gothicDir, zenkit::Vfs& vfs)
+{
+    g_fileList.clear();
+
+    // 1. luzne pliki na dysku (_compiled) - jesli sa
+    namespace fs = std::filesystem;
+    fs::path diskDir = fs::path(gothicDir) / "_Work" / "Data" / "Meshes" / "_compiled";
+    std::vector<std::string> names;
+
+    if (fs::exists(diskDir))
+    {
+        for (const auto& entry : fs::recursive_directory_iterator(diskDir))
+        {
+            if (!entry.is_regular_file()) continue;
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".mrm")
+                names.push_back(entry.path().filename().string());
+        }
+    }
+
+    // 2. wpisy z VDF-ow
+    std::vector<std::string> vfsNames = listVfsFilesByExt(vfs, ".mrm");
+    names.insert(names.end(), vfsNames.begin(), vfsNames.end());
+
+    // dedup case-insensitive
+    std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) {
+        return toLowerStr(a) < toLowerStr(b); // patrz helper nizej
+    });
+    names.erase(std::unique(names.begin(), names.end(), [](const std::string& a, const std::string& b) {
+        return toLowerStr(a) == toLowerStr(b);
+    }), names.end());
+
+    g_fileList = std::move(names);
+}
+
 Texture2D createFallbackTexture()
 {
     Texture2D tex;
@@ -627,14 +821,36 @@ static GLuint createProgram(const char* vSrc, const char* fSrc)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
+    std::string explicitPath;
+    for (int i = 1; i < argc; ++i)
     {
-        g_fileList.push_back(argv[1]);
+        std::string arg = argv[i];
+        if (arg == "--3ds") { g_meshSource = SOURCE_3DS; continue; }
+        explicitPath = arg;
     }
-    else
+
+    const char* envPath = std::getenv("GOTHIC2_DIR");
+    std::string gothicDir = envPath ? envPath : "";
+
+    if (g_meshSource == SOURCE_3DS)
     {
-        const char* envPath = std::getenv("GOTHIC2_DIR");
-        if (envPath) scanGothicDirectory(envPath);
+        if (!explicitPath.empty())
+            g_fileList.push_back(explicitPath);
+        else if (!gothicDir.empty())
+            scanGothicDirectory(gothicDir);
+    }
+    else // SOURCE_MRM (domyslny)
+    {
+        if (gothicDir.empty())
+        {
+            std::cerr << "Tryb MRM wymaga zmiennej GOTHIC2_DIR!" << std::endl;
+            return -1;
+        }
+        zenkit::Vfs& vfs = gothicVfs(gothicDir);
+        if (!explicitPath.empty())
+            g_fileList.push_back(explicitPath); // pojedyncza nazwa np. ITPO_HEALTH_02.MRM
+        else
+            scanGothicDirectoryMRM(gothicDir, vfs);
     }
 
     if (g_fileList.empty())
@@ -705,11 +921,25 @@ int main(int argc, char** argv)
 
     Texture2D fallbackTex = createFallbackTexture();
     Texture2D activeTex = fallbackTex;
+    static std::vector<Texture2D> g_submeshTextures;
 
     Mesh3DS mesh;
-    auto uploadMesh = [&](const std::string& path)
+    auto uploadMesh = [&](const std::string& identifier)
     {
-        if (Loader3DS::load(path, mesh))
+        bool loaded = false;
+
+        if (g_meshSource == SOURCE_3DS)
+        {
+            loaded = Loader3DS::load(identifier, mesh);
+        }
+        else
+        {
+            std::string gothicDir = std::getenv("GOTHIC2_DIR") ? std::getenv("GOTHIC2_DIR") : "";
+            zenkit::Vfs& vfs = gothicVfs(gothicDir);
+            loaded = loadMrmMeshIndexed(vfs, gothicDir, identifier, mesh);
+        }
+        
+         if (loaded)
         {
             glBindVertexArray(meshVAO);
 
@@ -728,54 +958,78 @@ int main(int argc, char** argv)
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
             glEnableVertexAttribArray(2);
 
+            // sprzatanie starych tekstur submeshy
+            for (auto& t : g_submeshTextures)
+                if (t.id != fallbackTex.id) t.free();
+            g_submeshTextures.clear();
+
+            if (activeTex.id != fallbackTex.id) activeTex.free();
+            activeTex = fallbackTex;
+
+            std::string gothicDir = std::getenv("GOTHIC2_DIR") ? std::getenv("GOTHIC2_DIR") : "";
+
+            if (!mesh.submeshes.empty())
+            {
+                // MRM: tekstura per submesh, prosty cache po nazwie w ramach jednego meshu
+                std::unordered_map<std::string, size_t> loadedByName;
+                g_submeshTextures.reserve(mesh.submeshes.size());
+
+                for (const auto& sm : mesh.submeshes)
+                {
+                    if (sm.textureFile.empty())
+                    {
+                        g_submeshTextures.push_back(fallbackTex);
+                        continue;
+                    }
+
+                    auto it = loadedByName.find(sm.textureFile);
+                    if (it != loadedByName.end())
+                    {
+                        g_submeshTextures.push_back(g_submeshTextures[it->second]);
+                        continue;
+                    }
+
+                    std::string resolved = TextureLoader::resolveGothicTexturePath(sm.textureFile, gothicDir);
+                    Texture2D tex = fallbackTex;
+                    if (!resolved.empty())
+                    {
+                        Texture2D loadedTex = TextureLoader::loadFromFile(resolved, true);
+                        if (loadedTex.valid) tex = loadedTex;
+                    }
+                    loadedByName[sm.textureFile] = g_submeshTextures.size();
+                    g_submeshTextures.push_back(tex);
+                }
+            }
+            else if (!mesh.textureFile.empty())
+            {
+                // 3DS: stara logika (lokalny plik obok modelu, potem TextureLoader)
+                std::string resolvedPath = "";
+                fs::path localTex = fs::path(identifier).parent_path() / mesh.textureFile;
+
+                if (fs::exists(localTex))
+                    resolvedPath = localTex.string();
+                else
+                    resolvedPath = TextureLoader::resolveGothicTexturePath(mesh.textureFile, gothicDir);
+
+                if (!resolvedPath.empty())
+                {
+                    Texture2D loaded = TextureLoader::loadFromFile(resolvedPath, true);
+                    if (loaded.valid) activeTex = loaded;
+                }
+            }
+
+
             g_distance = mesh.maxDimension * 2.5f;
 
             g_flySpeed = std::clamp(mesh.maxDimension * 0.5f, 50.0f, 10000.0f);
 
-            glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+            glm::mat4 model = (g_meshSource == SOURCE_3DS)
+                ? glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f))
+                : glm::mat4(1.0f);
             glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
             
             g_fpsCameraPos = rotatedCenter + glm::vec3(0.0f, mesh.maxDimension * 0.2f, g_distance);
 
-            if (activeTex.id != fallbackTex.id)
-            {
-                activeTex.free();
-            }
-
-            activeTex = fallbackTex;
-
-            if (!mesh.textureFile.empty())
-            {
-                std::cout << "\n[3DS LOG] Model wymaga tekstury: '" << mesh.textureFile << "'" << std::endl;
-
-                std::string resolvedPath = "";
-                fs::path localTex = fs::path(path).parent_path() / mesh.textureFile;
-
-                if (fs::exists(localTex))
-                {
-                    resolvedPath = localTex.string();
-                }
-                else
-                {
-                    const char* envPath = std::getenv("GOTHIC2_DIR");
-                    std::string gothicDir = envPath ? envPath : fs::path(path).parent_path().string();
-                    resolvedPath = TextureLoader::resolveGothicTexturePath(mesh.textureFile, gothicDir);
-                }
-
-                if (!resolvedPath.empty())
-                {
-                    std::cout << " -> Znaleziono plik: " << resolvedPath << std::endl;
-                    Texture2D loaded = TextureLoader::loadFromFile(resolvedPath, true);
-                    if (loaded.valid)
-                    {
-                        activeTex = loaded;
-                    }
-                }
-                else
-                {
-                    std::cout << " -> BLAD: Nie odnaleziono tekstury na dysku." << std::endl;
-                }
-            }
         }
     };
 
@@ -799,7 +1053,9 @@ int main(int argc, char** argv)
         }
 
         // --- OBSŁUGA POZYCJI KAMERY I KLAWIATURY ---
-        glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::mat4 model = (g_meshSource == SOURCE_3DS)
+            ? glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f))
+            : glm::mat4(1.0f);
         glm::vec3 rotatedCenter = glm::vec3(model * glm::vec4(mesh.center, 1.0f));
 
         // Reakcja na klawisz C z keyCallback
@@ -884,7 +1140,8 @@ int main(int argc, char** argv)
         // --- Panel Lista Plików ---
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2(320, (float)height));
-        ImGui::Begin("Lista Plikow (.3DS)", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+        std::string panelTitle = (g_meshSource == SOURCE_3DS) ? "Lista Plikow (.3DS)" : "Lista Plikow (.MRM)";
+        ImGui::Begin(panelTitle.c_str(), nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
         ImGui::InputText("Szukaj", filterBuffer, sizeof(filterBuffer));
         ImGui::Separator();
@@ -1073,17 +1330,36 @@ int main(int argc, char** argv)
         glUniform1i(glGetUniformLocation(meshProgram, "uEnableAlphaTest"), g_enableAlphaTest);
         glUniform1i(glGetUniformLocation(meshProgram, "uShowAlphaBounds"), g_showAlphaBounds);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, activeTex.id);
-        glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
-
         // Włączenie obsługi kanału Alpha
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         if (!mesh.faces.empty())
         {
             glBindVertexArray(meshVAO);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.faces.size() * 3), GL_UNSIGNED_SHORT, 0);
+
+            if (!mesh.submeshes.empty())
+            {
+                for (size_t i = 0; i < mesh.submeshes.size(); ++i)
+                {
+                    const auto& sm = mesh.submeshes[i];
+                    GLuint texId = (i < g_submeshTextures.size() && g_submeshTextures[i].valid)
+                                    ? g_submeshTextures[i].id : fallbackTex.id;
+
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, texId);
+                    glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
+
+                    glDrawElements(GL_TRIANGLES, sm.indexCount, GL_UNSIGNED_SHORT,
+                                (void*)(uintptr_t)(sm.indexStart * sizeof(uint16_t)));
+                }
+            }
+            else
+            {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, activeTex.id);
+                glUniform1i(glGetUniformLocation(meshProgram, "uTexture"), 0);
+                glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.faces.size() * 3), GL_UNSIGNED_SHORT, 0);
+            }
         }
 
         // Wyłączenie blendingu dla kolejnych obiektów
