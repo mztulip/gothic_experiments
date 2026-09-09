@@ -47,6 +47,23 @@ struct Vertex {
     glm::vec2 uv; //współrzędne tekstury
 };
 
+  struct SubMesh {
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t vertexCount = 0;
+    Texture2D texture;
+    glm::vec3 fallbackColor{0.6f, 0.6f, 0.62f};
+};
+
+struct VobSubMesh
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t vertexCount = 0;
+    Texture2D texture;
+    glm::vec3 fallbackColor{0.45f, 0.45f, 0.5f};
+};
+
 struct LoadedVob
 {
     glm::vec3 pos;
@@ -61,9 +78,7 @@ struct LoadedVob
     bool showVisual = false;
     bool meshLoaded = false;
 
-    GLuint meshVao = 0;
-    GLuint meshVbo = 0;
-    size_t meshVertexCount = 0;
+    std::vector<VobSubMesh> subMeshes;
 
     glm::vec3 meshMin{0.f};
     glm::vec3 meshMax{0.f};
@@ -499,13 +514,7 @@ static std::vector<LoadedLight> loadLightsFromZen(const std::string& path)
   return out;
 }
 
-  struct SubMesh {
-    GLuint vao = 0;
-    GLuint vbo = 0;
-    size_t vertexCount = 0;
-    Texture2D texture;
-    glm::vec3 fallbackColor{0.6f, 0.6f, 0.62f};
-};
+
 
 static std::vector<SubMesh> loadWorldSubMeshesFromZen(const std::string& path, TextureCache& texCache)
 {

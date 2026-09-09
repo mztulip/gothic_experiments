@@ -350,9 +350,7 @@ static std::vector<Vertex> buildUnitBBox()
 
 struct GLMeshHandle
 {
-    GLuint vao = 0;
-    GLuint vbo = 0;
-    size_t vertexCount = 0;
+  std::vector<VobSubMesh> subMeshes;
 };
 
 static std::unordered_map<std::string, GLMeshHandle> g_vobMeshCache;
@@ -365,15 +363,14 @@ static bool createVobMeshGL(LoadedVob& vob)
     auto cacheIt = g_vobMeshCache.find(vob.visualName);
     if (cacheIt != g_vobMeshCache.end())
     {
-        if (cacheIt->second.vao == 0)
+        auto subMeshes = cacheIt->second.subMeshes;
+        if (subMeshes.empty())
         {
             vob.meshLoaded = false;
             return false;
         }
 
-        vob.meshVao         = cacheIt->second.vao;
-        vob.meshVbo          = cacheIt->second.vbo;
-        vob.meshVertexCount = cacheIt->second.vertexCount;
+        vob.subMeshes = cacheIt->second.subMeshes;
         return true;
     }
 
@@ -391,7 +388,7 @@ static bool createVobMeshGL(LoadedVob& vob)
         {
             printf("Nie udalo sie zaladowac MRM: %s\n", vob.visualName.c_str());
             vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { 0, 0, 0 }; // negatywny cache - nie probuj ponownie
+            g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
             return false;
         }
     }
@@ -406,7 +403,7 @@ static bool createVobMeshGL(LoadedVob& vob)
         {
             printf("Nie udalo sie zaladowac VOB mesh: %s\n", vob.meshPath.c_str());
             vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { 0, 0, 0 };
+            g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
             return false;
         }
 
@@ -450,35 +447,36 @@ static bool createVobMeshGL(LoadedVob& vob)
     if (verts.empty())
     {
         vob.meshLoaded = false;
-        g_vobMeshCache[vob.visualName] = { 0, 0, 0 };
+        g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
         return false;
     }
 
     // ------------------------------------------------------------
     // GPU - wspolne dla obu zrodel
     // ------------------------------------------------------------
-    glGenVertexArrays(1, &vob.meshVao);
-    glGenBuffers(1, &vob.meshVbo);
+    VobSubMesh sm;
+    sm.vertexCount = verts.size();
 
-    glBindVertexArray(vob.meshVao);
+    glGenVertexArrays(1, &sm.vao);
+    glGenBuffers(1, &sm.vbo);
 
-    glBindBuffer(GL_ARRAY_BUFFER, vob.meshVbo);
+    glBindVertexArray(sm.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
     glEnableVertexAttribArray(1);
-
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
     glEnableVertexAttribArray(2);
 
     glBindVertexArray(0);
 
-    vob.meshVertexCount = verts.size();
+    vob.subMeshes.clear();
+    vob.subMeshes.push_back(sm);
 
-    g_vobMeshCache[vob.visualName] = { vob.meshVao, vob.meshVbo, vob.meshVertexCount };
+    g_vobMeshCache[vob.visualName] = { vob.subMeshes };
 
     return true;
 }
@@ -586,11 +584,14 @@ static void drawVobsToGBuffer(
 
         glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
 
-        glUniform1i(locHasTex, 0);
-        glUniform3fv(locAlbedo, 1, glm::value_ptr(vobFallbackColor));
+        for (const auto& sm : obj.subMeshes)
+        {
+            glUniform1i(locHasTex, 0);
+            glUniform3fv(locAlbedo, 1, glm::value_ptr(sm.fallbackColor));
 
-        glBindVertexArray(obj.meshVao);
-        glDrawArrays(GL_TRIANGLES, 0, GLsizei(obj.meshVertexCount));
+            glBindVertexArray(sm.vao);
+            glDrawArrays(GL_TRIANGLES, 0, GLsizei(sm.vertexCount));
+        }
     }
 }
 
@@ -626,9 +627,7 @@ static void loadAllVobMeshes(std::vector<LoadedVob>& worldVobs)
         {
             for (size_t i = 1; i < vobList.size(); ++i)
             {
-                vobList[i]->meshVao = firstVob->meshVao;
-                vobList[i]->meshVbo = firstVob->meshVbo;
-                vobList[i]->meshVertexCount = firstVob->meshVertexCount;
+                vobList[i]->subMeshes = firstVob->subMeshes;
                 vobList[i]->meshLocalTransform = firstVob->meshLocalTransform;
             }
         }
