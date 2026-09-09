@@ -18,6 +18,7 @@
 
 #include "structs.hpp"
 #include "loader.hpp"
+#include "camera.hpp"
 
 const char* vertex_shader_src = R"(
 #version 330 core
@@ -47,6 +48,7 @@ in vec3 FragPos;
 
 uniform vec3 objectColor;
 uniform bool useLighting;
+uniform float alpha;
 
 void main() {
     if (!useLighting) {
@@ -62,7 +64,7 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * objectColor;
 
-    FragColor = vec4(ambient + diffuse, 1.0);
+    FragColor = vec4(ambient + diffuse, 0.5);
 }
 )";
 
@@ -190,6 +192,12 @@ std::vector<glm::vec3> get_animated_bone_positions(
 
     uint32_t frame_idx = std::clamp(frame, 0, (int)anim.frame_count - 1);
 
+    // Macierz korekcyjna dla kości bazowej (obrót o -90 stopni wokół osi X)
+    // Zrównuje rotację domyślną Root Bone Gothica z siatką
+    // glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    // glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+// glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+glm::mat4 root_correction =(glm::mat4(1.0f));
     for (size_t i = 0; i < num_nodes; ++i)
     {
         const auto& node = hierarchy.nodes[i];
@@ -221,11 +229,14 @@ std::vector<glm::vec3> get_animated_bone_positions(
         }
         else
         {
-            global_transforms[i] = local_transform;
+            // Dla kości nadrzędnej (Root) dokładasz korekcję obrotu
+            global_transforms[i] = root_correction * local_transform;
         }
 
-        glm::vec4 pos = global_transforms[i][3];
-        positions[i] = glm::vec3(pos.x, pos.z, -pos.y);
+        glm::vec4 raw_pos = global_transforms[i][3];
+
+        // Zamiana osi na przestrzeń OpenGL: (X, Z, -Y)
+        positions[i] = glm::vec3(raw_pos.x, raw_pos.z, -raw_pos.y);
     }
 
     return positions;
@@ -288,9 +299,14 @@ int main(int argc, char** argv)
     ImGui_ImplOpenGL3_Init("#version 330");
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     GLuint shader_program = create_program();
     AppState app;
+
+    g_app_ptr = &app;
+    glfwSetScrollCallback(window, scroll_callback);
 
     std::string model_name = "ALLIGATOR";
     std::string gothic_dir = "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II";
@@ -336,6 +352,9 @@ int main(int argc, char** argv)
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) 
             glfwSetWindowShouldClose(window, true);
 
+        // Wywołanie obsługi kamery
+        handle_camera_input(window, app);
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -364,13 +383,35 @@ int main(int argc, char** argv)
 
         std::vector<glm::vec3> anim_pos;
         if (!character.animations.empty())
+        {
             anim_pos = get_animated_bone_positions(character.hierarchy, character.animations[0], current_frame);
+        }
         else
         {
-            for (const auto& node : character.hierarchy.nodes)
-                anim_pos.push_back(glm::vec3(node.transform[3][0], node.transform[3][2], -node.transform[3][1]));
-        }
+            // Budowanie hierarchii bez animacji (pozycja bazowa)
+            size_t num_nodes = character.hierarchy.nodes.size();
+            std::vector<glm::mat4> globals(num_nodes, glm::mat4(1.0f));
+            anim_pos.resize(num_nodes);
 
+            for (size_t i = 0; i < num_nodes; ++i)
+            {
+                const auto& node = character.hierarchy.nodes[i];
+                glm::mat4 local(
+                    node.transform[0][0], node.transform[0][1], node.transform[0][2], node.transform[0][3],
+                    node.transform[1][0], node.transform[1][1], node.transform[1][2], node.transform[1][3],
+                    node.transform[2][0], node.transform[2][1], node.transform[2][2], node.transform[2][3],
+                    node.transform[3][0], node.transform[3][1], node.transform[3][2], node.transform[3][3]
+                );
+
+                if (node.parent_index != 0xFFFF && node.parent_index < num_nodes)
+                    globals[i] = globals[node.parent_index] * local;
+                else
+                    globals[i] = local;
+
+                glm::vec4 raw = globals[i][3];
+                anim_pos[i] = glm::vec3(raw.x, raw.z, -raw.y);
+            }
+        }
         skel_render = update_skeleton_buffer(character.hierarchy, anim_pos, skel_render);
 
         int w, h;
@@ -402,16 +443,16 @@ int main(int argc, char** argv)
             glUniform3f(glGetUniformLocation(shader_program, "objectColor"), 0.6f, 0.6f, 0.6f);
             glUniform1i(glGetUniformLocation(shader_program, "useLighting"), true);
 
+            // Wyłączamy zapis do Z-Bufferu na czas rysowania przezroczystej siatki,
+            // dzięki czemu szkielet w środku będzie idealnie widoczny.
+            glDepthMask(GL_FALSE);
+
             for (const auto& m : body_meshes)
             {
-                   std::cout
-                << "[DRAW] vao=" << m.vao
-                << " indices=" << m.index_count
-                << '\n';
-
                 glBindVertexArray(m.vao);
                 glDrawElements(GL_TRIANGLES, m.index_count, GL_UNSIGNED_INT, 0);
             }
+            glDepthMask(GL_TRUE); // Przywracamy zapis do Z-bufferu
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 
