@@ -1,0 +1,134 @@
+# Architektura modeli i animacji w silniku ZenGin (Gothic)
+
+Ten dokument opisuje formaty plików modeli, szkieletów i animacji wykorzystywane przez silnik ZenGin (Gothic I / Gothic II) oraz ich wzajemne relacje.
+
+---
+
+## 1. Słownik formatów i rozszerzeń
+
+### Formaty źródłowe (nieskompilowane)
+Zazwyczaj występują w surowych zasobach deweloperskich (`_work/Data/Anims/`) i modyfikacjach. Rzadko spotykane w gotowych paczkach `.VDF`.
+
+* **`ASC`** (*ASCII Scene Export*)
+  * **Opis:** Tekstowy format eksportu z 3D Studio Max.
+  * **Rola:** Zawiera surowe dane 3D: siatki modeli (mesh), strukturę szkieletu (kości) lub surowe klatki kluczowe animacji.
+
+* **`MDS`** (*Model Script*)
+  * **Opis:** Tekstowy plik skryptu animacji (składnia języka Daedalus).
+  * **Rola:** Główna instrukcja obsługi postaci/potwora dla silnika. Definiuje:
+    * Jaki plik `.ASC`/`.3DS` stanowi szkielet i siatkę bazową (`meshAndTree`).
+    * Nazwy animacji używane przez skrypty gry (np. `S_FISTRUN`).
+    * Przypisanie zdarzeń do klatek (SFX — dźwięki kroków, PFX — efekty cząsteczkowe).
+    * Przejścia i skróty animacji (blending).
+
+---
+
+### Formaty skompilowane (binarne)
+Występują w oficjalnych paczkach VFS (`Anims.vdf`, `Anims_Addon.vdf`) w katalogu `_COMPILED/`. Służą do szybkiego odczytu przez silnik i biblioteki takie jak **ZenKit**.
+
+* **`MSB`** (*Model Script Binary*)
+  * **Opis:** Skompilowana, binarna wersja skryptu **`MDS`**.
+  * **Rola:** Zawiera przeliczone i gotowe do szybkiego odczytu informacje o animacjach, zdarzeniach klatek i strukturze modelu.
+
+* **`MDH`** (*Model Data Header / Model Skeleton Header*)
+  * **Opis:** Skompilowany nagłówek szkieletu.
+  * **Rola:** Przechowuje pełną strukturę i hierarchię kości (położenie, lokalne rotacje i nazwy węzłów) wyciągniętą z plików `.ASC`.
+
+* **`MAN`** (*Model Animation Binary*)
+  * **Opis:** Skompilowany plik pojedynczej animacji.
+  * **Rola:** Zawiera przeliczone klatki kluczowe pozycji i rotacji kości dla konkretnego ruchu (np. `ALLIGATOR-S_FISTWALK.MAN`).
+
+* **`MDM`** (*Model Mesh*)
+  * **Opis:** Binarny plik siatki połączonej ze szkieletem (*skinned mesh*).
+  * **Rola:** Często tworzony dynamicznie w pamięci RAM przez silnik na podstawie plików `.MDH` i siatek źródłowych lub zapisywany w `_compiled/` przy kompilacji w edytorze Spacer.
+
+---
+
+## 2. Przepływ danych (Kompilacja)
+
+```text
+  [ŹRÓDŁA / TEKSTOWE]                              [VFS / BINARNE (ZenKit)]
+
+  Szkielet i Mesh (np. ALLIGATOR.ASC) ────┐
+                                          ├── (Kompilacja) ──> ALLIGATOR.MDH         (Szkielet)
+  Animacje (np. ALLIGATOR_WALK.ASC)   ───┤               ──> ALLIGATOR-S_WALK.MAN (Animacja)
+                                          │
+  Skrypt animacji (ALLIGATOR.MDS)     ────┴───────────────> ALLIGATOR.MSB         (Logika animacji)
+
+
+  ## Zestawienie i porównanie formatów animacji ZenGin
+
+| Rozszerzenie | Pełne rozwinięcie | Format | Rola i zawartość | Główny plik w `Anims.vdf` |
+| :--- | :--- | :--- | :--- | :---: |
+| **`.ASC`** | 3D Studio Max ASCII Scene | Tekstowy | Surowe źródło 3D: siatka (mesh), szkielet lub klatki animacji. | ❌ Nie |
+| **`.MDS`** | Model Script | Tekstowy | Skrypt przypisujący animacje do stanu gry, zdarzenia (SFX/PFX) oraz powiązane pliki 3D. | ❌ Rzadko |
+| **`.MSB`** | Model Script Binary | Binarny | Skompilowany skrypt `.MDS`. Zapewnia szybki odczyt logiki animacji przez silnik. |  Tak |
+| **`.MDH`** | Model Data Header | Binarny | Skompilowany szkielet. Zawiera nazwy, hierarchię i rotacje lokalne kości. |  Tak |
+| **`.MAN`** | Model Animation Binary | Binarny | Skompilowane klatki kluczowe pozycji i rotacji dla konkretnego ruchu (np. bieg, atak). |  Tak |
+| **`.MDM`** | Model Mesh | Binarny | Siatka modelu połączona ze szkieletem (*skinned mesh*). Często tworzona w pamięci RAM. | ⚠️ Opcjonalnie |
+
+Aplikacja aby załadować animacje musi załadować plik MSB
+
+## Algorytm ładowania modelu i animacji (ZenKit / ZenGin)
+
+Przedstawiony algorytm opisuje kolejność operacji, jaką aplikacja powinna wykonać, aby poprawnie wczytać strukturę modelu, szkielet oraz pliki klatek animacji bezpośrednio z zasobów VFS.
+
+---
+
+### 1. Diagram przepływu (Flowchart)
+
+```text
+                  +--------------------------------+
+                  |  1. Podaj nazwę modelu         |
+                  |     (np. "ALLIGATOR")          |
+                  +--------------------------------+
+                                   |
+                                   v
+                  +--------------------------------+
+                  |  2. Szukaj skryptu w VFS       |
+                  |     (*.MSB -> *.MDS)           |
+                  +--------------------------------+
+                                   |
+                         +---------+---------+
+                         |  Czy znaleziono?  |
+                         +---------+---------+
+                          /                 \
+                     TAK /                   \ NIE
+                        v                     v
+          +---------------------------+   +-----------------------+
+          | Sparsuj zebranym         |   | Zgłoś błąd:           |
+          | `zenkit::ModelScript`     |   | Brak skryptu modelu   |
+          +---------------------------+   +-----------------------+
+                        |
+                        v
+          +---------------------------+
+          | Odczytaj mds.skeleton.name|
+          | oraz mds.animations       |
+          +---------------------------+
+                        |
+            +-----------+-----------+
+            |                       |
+            v                       v
++-----------------------+   +-----------------------+
+| 3. Ładowanie szkieletu|   | 4. Ładowanie animacji |
+|    (Plik *.MDH)       |   |    (Plik *.MAN)       |
++-----------------------+   +-----------------------+
+            |                       |
+            v                       v
++-----------------------+   +-----------------------+
+| Sparsuj za pomocą     |   | Pobierz plik z listy  |
+| `ModelHierarchy`      |   | `mds.animations[i]`   |
++-----------------------+   +-----------------------+
+            |                       |
+            |                       v
+            |               +-----------------------+
+            |               | Sparsuj za pomocą     |
+            |               | `ModelAnimation`      |
+            |               +-----------------------+
+            \                       /
+             \                     /
+              v                   v
+          +---------------------------+
+          | 5. Połącz dane i przekaż  |
+          |    do pętli renderowania  |
+          +---------------------------+
