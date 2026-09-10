@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include "zen_loader.hpp"
 
 // Vertex jest juz zdefiniowany w zen_loader.hpp (pos, normal, uv) -
 // ten plik musi byc dolaczony PO zen_loader.hpp.
@@ -29,11 +30,6 @@ static std::string toMrmName(const std::string& visualName)
     return name;
 }
 
-struct MrmSubMeshData
-{
-    std::vector<Vertex> verts;
-    std::string textureName; // z sub.mat.texture, moze byc puste
-};
 
 // ---------------------------------------------------------------------
 // Laduje MRM z zamontowanego Vfs i splaszcza go do tego samego
@@ -44,7 +40,7 @@ static bool loadMrmMesh(
     zenkit::Vfs& vfs,
     const std::string& gothicDir,
     const std::string& visualName,
-    std::vector<MrmSubMeshData>& outSubMeshes)
+    std::vector<SubMeshData>& outSubMeshes)
 {
     if (visualName.empty())
         return false;
@@ -101,7 +97,7 @@ static bool loadMrmMesh(
 
     for (const auto& sub : mrm.sub_meshes)
     {
-        MrmSubMeshData data;
+        SubMeshData data;
         data.textureName = sub.mat.texture;
 
         for (const auto& tri : sub.triangles)

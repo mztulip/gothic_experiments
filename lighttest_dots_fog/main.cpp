@@ -354,6 +354,127 @@ struct GLMeshHandle
   std::vector<VobSubMesh> subMeshes;
 };
 
+static bool loadThreeDsSubMeshes(
+    const std::string& meshPath,
+    const std::string& visualName,
+    std::vector<SubMeshData>& outSubMeshes,
+    glm::mat4& outLocalTransform)
+{
+    printf("[LOAD 3DS] Parsowanie: %s (VOB: %s)\n", meshPath.c_str(), visualName.c_str());
+    fflush(stdout);
+
+    Mesh3DS mesh;
+
+    if (!Loader3DS::load(meshPath, mesh))
+    {
+        printf("Nie udalo sie zaladowac VOB mesh: %s\n", meshPath.c_str());
+        return false;
+    }
+
+    glm::vec3 size = mesh.maxBounds - mesh.minBounds;
+    float maxDim = std::max(size.x, std::max(size.y, size.z));
+
+    if (maxDim > 3000.f)
+    {
+        printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
+               visualName.c_str(), meshPath.c_str(), maxDim,
+               mesh.vertices.size(), mesh.faces.size());
+    }
+
+    outLocalTransform = mesh.localTransform;
+
+    // Grupowanie trojkatow po materiale
+    std::unordered_map<uint16_t, std::vector<Vertex>> groupedVerts;
+
+    for (size_t faceIdx = 0; faceIdx < mesh.faces.size(); ++faceIdx)
+    {
+        const auto& face = mesh.faces[faceIdx];
+
+        if (face.a >= mesh.vertices.size() ||
+            face.b >= mesh.vertices.size() ||
+            face.c >= mesh.vertices.size())
+        {
+            continue;
+        }
+
+        uint16_t matIdx = (faceIdx < mesh.materialForFace.size()) ? mesh.materialForFace[faceIdx] : 0;
+
+        glm::vec3 p[3];
+        p[0] = glm::vec3(mesh.vertices[face.a].x, mesh.vertices[face.a].y, mesh.vertices[face.a].z);
+        p[1] = glm::vec3(mesh.vertices[face.b].x, mesh.vertices[face.b].y, mesh.vertices[face.b].z);
+        p[2] = glm::vec3(mesh.vertices[face.c].x, mesh.vertices[face.c].y, mesh.vertices[face.c].z);
+
+        glm::vec3 normal = glm::normalize(glm::cross(p[1] - p[0], p[2] - p[0]));
+
+        glm::vec2 uv[3] = { glm::vec2(0.0f), glm::vec2(0.0f), glm::vec2(0.0f) };
+        if (!mesh.uvs.empty())
+        {
+            if (face.a < mesh.uvs.size()) uv[0] = mesh.uvs[face.a];
+            if (face.b < mesh.uvs.size()) uv[1] = mesh.uvs[face.b];
+            if (face.c < mesh.uvs.size()) uv[2] = mesh.uvs[face.c];
+        }
+
+        groupedVerts[matIdx].push_back({ p[0], normal, uv[0] });
+        groupedVerts[matIdx].push_back({ p[1], normal, uv[1] });
+        groupedVerts[matIdx].push_back({ p[2], normal, uv[2] });
+    }
+
+    outSubMeshes.clear();
+
+    for (auto& [matIdx, verts] : groupedVerts)
+    {
+        if (verts.empty())
+            continue;
+
+        SubMeshData data;
+        data.verts = std::move(verts);
+
+        if (matIdx < mesh.materials.size())
+            data.textureName = mesh.materials[matIdx].textureFile;
+
+        outSubMeshes.push_back(std::move(data));
+    }
+
+    return !outSubMeshes.empty();
+}
+
+static std::vector<VobSubMesh> uploadSubMeshData(const std::vector<SubMeshData>& subData)
+{
+    std::vector<VobSubMesh> result;
+
+    for (const auto& data : subData)
+    {
+        if (data.verts.empty())
+            continue;
+
+        VobSubMesh sm;
+        sm.vertexCount = data.verts.size();
+
+        if (!data.textureName.empty())
+            sm.texture = g_texCache.loadTexture(data.textureName);
+
+        glGenVertexArrays(1, &sm.vao);
+        glGenBuffers(1, &sm.vbo);
+
+        glBindVertexArray(sm.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
+        glBufferData(GL_ARRAY_BUFFER, data.verts.size() * sizeof(Vertex), data.verts.data(), GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+        glEnableVertexAttribArray(2);
+
+        glBindVertexArray(0);
+
+        result.push_back(sm);
+    }
+
+    return result;
+}
+
 static std::unordered_map<std::string, GLMeshHandle> g_vobMeshCache;
 
 static bool createVobMeshGL(LoadedVob& vob)
@@ -364,8 +485,7 @@ static bool createVobMeshGL(LoadedVob& vob)
     auto cacheIt = g_vobMeshCache.find(vob.visualName);
     if (cacheIt != g_vobMeshCache.end())
     {
-        auto subMeshes = cacheIt->second.subMeshes;
-        if (subMeshes.empty())
+        if (cacheIt->second.subMeshes.empty())
         {
             vob.meshLoaded = false;
             return false;
@@ -375,179 +495,41 @@ static bool createVobMeshGL(LoadedVob& vob)
         return true;
     }
 
-    std::vector<Vertex> verts;
+    std::vector<SubMeshData> subData;
+    glm::mat4 localTransform(1.f);
+    bool ok = false;
 
-    // ------------------------------------------------------------
-    // Zrodlo geometrii - przelaczane przez g_meshSource
-    // ------------------------------------------------------------
     if (g_meshSource == MeshSource::MRM)
     {
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
-
-        std::vector<MrmSubMeshData> mrmSubs;
-        if (!loadMrmMesh(vfs, gothicDir, vob.visualName, mrmSubs))
-        {
-            printf("Nie udalo sie zaladowac MRM: %s\n", vob.visualName.c_str());
-            vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };
-            return false;
-        }
-
-        vob.subMeshes.clear();
-
-        for (auto& mrmSub : mrmSubs)
-        {
-            if (mrmSub.verts.empty())
-                continue;
-
-            VobSubMesh sm;
-            sm.vertexCount = mrmSub.verts.size();
-
-            if (!mrmSub.textureName.empty())
-                sm.texture = g_texCache.loadTexture(mrmSub.textureName);
-
-            glGenVertexArrays(1, &sm.vao);
-            glGenBuffers(1, &sm.vbo);
-
-            glBindVertexArray(sm.vao);
-            glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
-            glBufferData(GL_ARRAY_BUFFER, mrmSub.verts.size() * sizeof(Vertex), mrmSub.verts.data(), GL_STATIC_DRAW);
-
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
-            glEnableVertexAttribArray(2);
-
-            glBindVertexArray(0);
-
-            vob.subMeshes.push_back(sm);
-        }
-
-        if (vob.subMeshes.empty())
-        {
-            vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };
-            return false;
-        }
-
-        g_vobMeshCache[vob.visualName] = { vob.subMeshes };
-        return true;
+        ok = loadMrmMesh(vfs, gothicDir, vob.visualName, subData);
     }
-    else // MeshSource::ThreeDS
+    else
     {
-        printf("[LOAD 3DS] Parsowanie: %s (VOB: %s)\n", vob.meshPath.c_str(), vob.visualName.c_str());
-        fflush(stdout);
-
-        Mesh3DS mesh;
-
-        if (!Loader3DS::load(vob.meshPath, mesh))
-        {
-            printf("Nie udalo sie zaladowac VOB mesh: %s\n", vob.meshPath.c_str());
-            vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };
-            return false;
-        }
-
-        glm::vec3 size = mesh.maxBounds - mesh.minBounds;
-        float maxDim = std::max(size.x, std::max(size.y, size.z));
-
-        if (maxDim > 3000.f)
-        {
-            printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
-                vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
-                mesh.vertices.size(), mesh.faces.size());
-        }
-
-        vob.meshLocalTransform = mesh.localTransform;
-
-        // ------------------------------------------------------------
-        // Grupowanie trojkatow po materiale (analogicznie do MRM/swiata)
-        // ------------------------------------------------------------
-        std::unordered_map<uint16_t, std::vector<Vertex>> groupedVerts;
-
-        for (size_t faceIdx = 0; faceIdx < mesh.faces.size(); ++faceIdx)
-        {
-            const auto& face = mesh.faces[faceIdx];
-
-            if (face.a >= mesh.vertices.size() ||
-                face.b >= mesh.vertices.size() ||
-                face.c >= mesh.vertices.size())
-            {
-                continue;
-            }
-
-            uint16_t matIdx = (faceIdx < mesh.materialForFace.size()) ? mesh.materialForFace[faceIdx] : 0;
-
-            glm::vec3 p[3];
-            p[0] = glm::vec3(mesh.vertices[face.a].x, mesh.vertices[face.a].y, mesh.vertices[face.a].z);
-            p[1] = glm::vec3(mesh.vertices[face.b].x, mesh.vertices[face.b].y, mesh.vertices[face.b].z);
-            p[2] = glm::vec3(mesh.vertices[face.c].x, mesh.vertices[face.c].y, mesh.vertices[face.c].z);
-
-            glm::vec3 normal = glm::normalize(glm::cross(p[1] - p[0], p[2] - p[0]));
-
-            glm::vec2 uv[3] = { glm::vec2(0.0f), glm::vec2(0.0f), glm::vec2(0.0f) };
-            if (!mesh.uvs.empty())
-            {
-                if (face.a < mesh.uvs.size()) uv[0] = mesh.uvs[face.a];
-                if (face.b < mesh.uvs.size()) uv[1] = mesh.uvs[face.b];
-                if (face.c < mesh.uvs.size()) uv[2] = mesh.uvs[face.c];
-            }
-
-            groupedVerts[matIdx].push_back({ p[0], normal, uv[0] });
-            groupedVerts[matIdx].push_back({ p[1], normal, uv[1] });
-            groupedVerts[matIdx].push_back({ p[2], normal, uv[2] });
-        }
-
-        // ------------------------------------------------------------
-        // Budowa VobSubMesh per grupa materialowa
-        // ------------------------------------------------------------
-        vob.subMeshes.clear();
-
-        for (auto& [matIdx, verts] : groupedVerts)
-        {
-            if (verts.empty())
-                continue;
-
-            VobSubMesh sm;
-            sm.vertexCount = verts.size();
-
-            if (matIdx < mesh.materials.size() && !mesh.materials[matIdx].textureFile.empty())
-            {
-                sm.texture = g_texCache.loadTexture(mesh.materials[matIdx].textureFile);
-            }
-
-            glGenVertexArrays(1, &sm.vao);
-            glGenBuffers(1, &sm.vbo);
-
-            glBindVertexArray(sm.vao);
-            glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
-            glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
-
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
-            glEnableVertexAttribArray(2);
-
-            glBindVertexArray(0);
-
-            vob.subMeshes.push_back(sm);
-        }
-
-        if (vob.subMeshes.empty())
-        {
-            vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };
-            return false;
-        }
-
-        g_vobMeshCache[vob.visualName] = { vob.subMeshes };
-        return true;
+        ok = loadThreeDsSubMeshes(vob.meshPath, vob.visualName, subData, localTransform);
+        vob.meshLocalTransform = localTransform;
     }
+
+    if (!ok)
+    {
+        printf("Nie udalo sie zaladowac mesh: %s\n", vob.visualName.c_str());
+        vob.meshLoaded = false;
+        g_vobMeshCache[vob.visualName] = { {} };
+        return false;
+    }
+
+    vob.subMeshes = uploadSubMeshData(subData);
+
+    if (vob.subMeshes.empty())
+    {
+        vob.meshLoaded = false;
+        g_vobMeshCache[vob.visualName] = { {} };
+        return false;
+    }
+
+    g_vobMeshCache[vob.visualName] = { vob.subMeshes };
+    return true;
 }
 
 static glm::mat4 getVobBaseRotation()

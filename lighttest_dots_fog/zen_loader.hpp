@@ -55,6 +55,12 @@ struct Vertex {
     glm::vec3 fallbackColor{0.6f, 0.6f, 0.62f};
 };
 
+struct SubMeshData
+{
+    std::vector<Vertex> verts;
+    std::string textureName; // moze byc puste
+};
+
 struct VobSubMesh
 {
     GLuint vao = 0;
