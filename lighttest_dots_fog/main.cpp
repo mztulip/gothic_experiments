@@ -83,7 +83,7 @@ static bool g_showVobBBoxes = false;
 
 static TextureCache g_texCache;
 enum class MeshSource { ThreeDS, MRM };
-static MeshSource g_meshSource = MeshSource::MRM; // zmien na MeshSource::MRM zeby przelaczyc
+static MeshSource g_meshSource = MeshSource::ThreeDS;
 
 
 
@@ -447,7 +447,7 @@ static bool createVobMeshGL(LoadedVob& vob)
         {
             printf("Nie udalo sie zaladowac VOB mesh: %s\n", vob.meshPath.c_str());
             vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
+            g_vobMeshCache[vob.visualName] = { {} };
             return false;
         }
 
@@ -457,23 +457,29 @@ static bool createVobMeshGL(LoadedVob& vob)
         if (maxDim > 3000.f)
         {
             printf("[MESH WARNING] PODEJRZANIE DUZY MESH: %s (path=%s) rozmiar=%.1f wierzcholkow=%zu trojkatow=%zu\n",
-                   vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
-                   mesh.vertices.size(), mesh.faces.size());
+                vob.visualName.c_str(), vob.meshPath.c_str(), maxDim,
+                mesh.vertices.size(), mesh.faces.size());
         }
 
         vob.meshLocalTransform = mesh.localTransform;
 
-        verts.reserve(mesh.faces.size() * 3);
+        // ------------------------------------------------------------
+        // Grupowanie trojkatow po materiale (analogicznie do MRM/swiata)
+        // ------------------------------------------------------------
+        std::unordered_map<uint16_t, std::vector<Vertex>> groupedVerts;
 
-        // FLAT SHADING - kazdy face dostaje wlasne 3 wierzcholki z ta sama normalna.
-        for (const auto& face : mesh.faces)
+        for (size_t faceIdx = 0; faceIdx < mesh.faces.size(); ++faceIdx)
         {
+            const auto& face = mesh.faces[faceIdx];
+
             if (face.a >= mesh.vertices.size() ||
                 face.b >= mesh.vertices.size() ||
                 face.c >= mesh.vertices.size())
             {
                 continue;
             }
+
+            uint16_t matIdx = (faceIdx < mesh.materialForFace.size()) ? mesh.materialForFace[faceIdx] : 0;
 
             glm::vec3 p[3];
             p[0] = glm::vec3(mesh.vertices[face.a].x, mesh.vertices[face.a].y, mesh.vertices[face.a].z);
@@ -482,47 +488,66 @@ static bool createVobMeshGL(LoadedVob& vob)
 
             glm::vec3 normal = glm::normalize(glm::cross(p[1] - p[0], p[2] - p[0]));
 
-            verts.push_back({ p[0], normal, glm::vec2(0.0f) });
-            verts.push_back({ p[1], normal, glm::vec2(0.0f) });
-            verts.push_back({ p[2], normal, glm::vec2(0.0f) });
+            glm::vec2 uv[3] = { glm::vec2(0.0f), glm::vec2(0.0f), glm::vec2(0.0f) };
+            if (!mesh.uvs.empty())
+            {
+                if (face.a < mesh.uvs.size()) uv[0] = mesh.uvs[face.a];
+                if (face.b < mesh.uvs.size()) uv[1] = mesh.uvs[face.b];
+                if (face.c < mesh.uvs.size()) uv[2] = mesh.uvs[face.c];
+            }
+
+            groupedVerts[matIdx].push_back({ p[0], normal, uv[0] });
+            groupedVerts[matIdx].push_back({ p[1], normal, uv[1] });
+            groupedVerts[matIdx].push_back({ p[2], normal, uv[2] });
         }
+
+        // ------------------------------------------------------------
+        // Budowa VobSubMesh per grupa materialowa
+        // ------------------------------------------------------------
+        vob.subMeshes.clear();
+
+        for (auto& [matIdx, verts] : groupedVerts)
+        {
+            if (verts.empty())
+                continue;
+
+            VobSubMesh sm;
+            sm.vertexCount = verts.size();
+
+            if (matIdx < mesh.materials.size() && !mesh.materials[matIdx].textureFile.empty())
+            {
+                sm.texture = g_texCache.loadTexture(mesh.materials[matIdx].textureFile);
+            }
+
+            glGenVertexArrays(1, &sm.vao);
+            glGenBuffers(1, &sm.vbo);
+
+            glBindVertexArray(sm.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
+            glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
+
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+            glEnableVertexAttribArray(2);
+
+            glBindVertexArray(0);
+
+            vob.subMeshes.push_back(sm);
+        }
+
+        if (vob.subMeshes.empty())
+        {
+            vob.meshLoaded = false;
+            g_vobMeshCache[vob.visualName] = { {} };
+            return false;
+        }
+
+        g_vobMeshCache[vob.visualName] = { vob.subMeshes };
+        return true;
     }
-
-    if (verts.empty())
-    {
-        vob.meshLoaded = false;
-        g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
-        return false;
-    }
-
-    // ------------------------------------------------------------
-    // GPU - wspolne dla obu zrodel
-    // ------------------------------------------------------------
-    VobSubMesh sm;
-    sm.vertexCount = verts.size();
-
-    glGenVertexArrays(1, &sm.vao);
-    glGenBuffers(1, &sm.vbo);
-
-    glBindVertexArray(sm.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex), verts.data(), GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
-    glEnableVertexAttribArray(2);
-
-    glBindVertexArray(0);
-
-    vob.subMeshes.clear();
-    vob.subMeshes.push_back(sm);
-
-    g_vobMeshCache[vob.visualName] = { vob.subMeshes };
-
-    return true;
 }
 
 static glm::mat4 getVobBaseRotation()

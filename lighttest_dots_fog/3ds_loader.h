@@ -34,6 +34,7 @@ struct Mesh3DSMaterial
 struct Mesh3DS
 {
     std::vector<VertexLoader> vertices;
+    std::vector<glm::vec2> uvs; 
     std::vector<Face> faces;
     std::vector<Mesh3DSMaterial> materials;
     std::vector<uint16_t> materialForFace;
@@ -188,6 +189,25 @@ private:
                     size_t startIdx = mesh.vertices.size();
                     mesh.vertices.resize(startIdx + numVertices);
                     file.read(reinterpret_cast<char*>(&mesh.vertices[startIdx]), numVertices * sizeof(VertexLoader));
+                    break;
+                }
+
+                case 0x4140: // TEX_VERTS - mapowanie UV, jedno per wierzcholek (ten sam indeks co POINT_ARRAY)
+                {
+                    uint16_t numUVs = 0;
+                    file.read(reinterpret_cast<char*>(&numUVs), sizeof(numUVs));
+
+                    size_t startIdx = mesh.uvs.size();
+                    mesh.uvs.resize(startIdx + numUVs);
+
+                    std::vector<float> raw(size_t(numUVs) * 2);
+                    file.read(reinterpret_cast<char*>(raw.data()), raw.size() * sizeof(float));
+
+                    for (uint16_t i = 0; i < numUVs; ++i)
+                    {
+                        mesh.uvs[startIdx + i] = glm::vec2(raw[i * 2 + 0], raw[i * 2 + 1]);
+                    }
+
                     break;
                 }
 

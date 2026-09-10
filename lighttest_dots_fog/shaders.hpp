@@ -81,9 +81,12 @@ uniform bool uHasTexture;
 uniform vec3 uAlbedo;
 
 void main() {
-  vec3 texColor = uHasTexture ? texture(uTexture, vUV).rgb : uAlbedo;
-// vec3 texColor = vUV.xyx;
-  outAlbedo   = vec4(texColor, 1.0);
+  vec4 texColor = uHasTexture ? texture(uTexture, vUV) : vec4(uAlbedo, 1.0);
+
+  if (uHasTexture && texColor.a < 0.5)
+      discard;
+
+  outAlbedo   = vec4(texColor.rgb, 1.0);
   outNormal   = vec4(normalize(vNormal), 0.0);
   outWorldPos = vec4(vWorldPos, 1.0);
 }
