@@ -81,6 +81,7 @@ static float g_fogPointSize  = 4.f;
 static bool g_lightCorrectionChanged = false;
 static bool g_showVobBBoxes = false;
 
+static TextureCache g_texCache;
 enum class MeshSource { ThreeDS, MRM };
 static MeshSource g_meshSource = MeshSource::MRM; // zmien na MeshSource::MRM zeby przelaczyc
 
@@ -384,13 +385,56 @@ static bool createVobMeshGL(LoadedVob& vob)
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
 
-        if (!loadMrmMesh(vfs, gothicDir, vob.visualName, verts))
+        std::vector<MrmSubMeshData> mrmSubs;
+        if (!loadMrmMesh(vfs, gothicDir, vob.visualName, mrmSubs))
         {
             printf("Nie udalo sie zaladowac MRM: %s\n", vob.visualName.c_str());
             vob.meshLoaded = false;
-            g_vobMeshCache[vob.visualName] = { {} };  // pusta lista submeshy = "nie udalo sie"
+            g_vobMeshCache[vob.visualName] = { {} };
             return false;
         }
+
+        vob.subMeshes.clear();
+
+        for (auto& mrmSub : mrmSubs)
+        {
+            if (mrmSub.verts.empty())
+                continue;
+
+            VobSubMesh sm;
+            sm.vertexCount = mrmSub.verts.size();
+
+            if (!mrmSub.textureName.empty())
+                sm.texture = g_texCache.loadTexture(mrmSub.textureName);
+
+            glGenVertexArrays(1, &sm.vao);
+            glGenBuffers(1, &sm.vbo);
+
+            glBindVertexArray(sm.vao);
+            glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
+            glBufferData(GL_ARRAY_BUFFER, mrmSub.verts.size() * sizeof(Vertex), mrmSub.verts.data(), GL_STATIC_DRAW);
+
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
+            glEnableVertexAttribArray(2);
+
+            glBindVertexArray(0);
+
+            vob.subMeshes.push_back(sm);
+        }
+
+        if (vob.subMeshes.empty())
+        {
+            vob.meshLoaded = false;
+            g_vobMeshCache[vob.visualName] = { {} };
+            return false;
+        }
+
+        g_vobMeshCache[vob.visualName] = { vob.subMeshes };
+        return true;
     }
     else // MeshSource::ThreeDS
     {
@@ -586,8 +630,17 @@ static void drawVobsToGBuffer(
 
         for (const auto& sm : obj.subMeshes)
         {
-            glUniform1i(locHasTex, 0);
-            glUniform3fv(locAlbedo, 1, glm::value_ptr(sm.fallbackColor));
+            if (g_texturesEnabled && sm.texture.valid)
+            {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, sm.texture.id);
+                glUniform1i(locHasTex, 1);
+            }
+            else
+            {
+                glUniform1i(locHasTex, 0);
+                glUniform3fv(locAlbedo, 1, glm::value_ptr(sm.fallbackColor));
+            }
 
             glBindVertexArray(sm.vao);
             glDrawArrays(GL_TRIANGLES, 0, GLsizei(sm.vertexCount));
@@ -702,8 +755,7 @@ int main(int argc, char** argv)
         worldLights.push_back(demo);
     }
 
-    TextureCache texCache;
-    texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/", texSource);
+    g_texCache.indexDirectory("/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II/", texSource);
     std::vector<SubMesh> worldSubMeshes;
 
     glm::vec3 camStart;
@@ -821,7 +873,7 @@ int main(int argc, char** argv)
     auto t3 = std::chrono::high_resolution_clock::now();
     if(worldMode) //to jest false jeśli nie na świateł w pliku zen
     {
-        worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, texCache);
+        worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, g_texCache);
 
         t1 = std::chrono::high_resolution_clock::now();
         printf("[LOG] Wczytanie ZEN z dysku: %.2f ms\n",

@@ -29,6 +29,12 @@ static std::string toMrmName(const std::string& visualName)
     return name;
 }
 
+struct MrmSubMeshData
+{
+    std::vector<Vertex> verts;
+    std::string textureName; // z sub.mat.texture, moze byc puste
+};
+
 // ---------------------------------------------------------------------
 // Laduje MRM z zamontowanego Vfs i splaszcza go do tego samego
 // formatu Vertex (pos, normal, uv), ktorego uzywa loader 3ds -
@@ -38,22 +44,20 @@ static bool loadMrmMesh(
     zenkit::Vfs& vfs,
     const std::string& gothicDir,
     const std::string& visualName,
-    std::vector<Vertex>& outVerts)
+    std::vector<MrmSubMeshData>& outSubMeshes)
 {
     if (visualName.empty())
         return false;
 
     std::string mrmName = toMrmName(visualName);
 
-    // --- Priorytet 1: pliki na dysku w _Work/Data/Meshes/_compiled ---
-    // (dokladnie tak jak robi to prawdziwy silnik - dysk nadpisuje VDF)
     namespace fs = std::filesystem;
     fs::path diskPath = fs::path(gothicDir) / "_Work" / "Data" / "Meshes" / "_compiled" / mrmName;
 
     std::unique_ptr<zenkit::Read> reader;
     zenkit::MultiResolutionMesh mrm;
 
-     if (fs::exists(diskPath))
+    if (fs::exists(diskPath))
     {
         printf("[LOAD MRM] (dysk) Parsowanie: %s (VOB: %s)\n", diskPath.string().c_str(), visualName.c_str());
         fflush(stdout);
@@ -71,7 +75,6 @@ static bool loadMrmMesh(
     }
     else
     {
-        // --- Priorytet 2: VFS (zamontowane VDF-y) ---
         const zenkit::VfsNode* node = vfs.find(mrmName);
         if (node == nullptr)
         {
@@ -94,14 +97,15 @@ static bool loadMrmMesh(
         }
     }
 
-    outVerts.clear();
+    outSubMeshes.clear();
 
     for (const auto& sub : mrm.sub_meshes)
     {
+        MrmSubMeshData data;
+        data.textureName = sub.mat.texture;
+
         for (const auto& tri : sub.triangles)
         {
-            // Kolejnosc 0,2,1 - tak samo jak przy world_mesh w zen_loader.hpp,
-            // zeby zachowac spojne nawijanie trojkatow wzgledem zenPosToGL.
             const uint16_t order[3] = { tri.wedges[0], tri.wedges[2], tri.wedges[1] };
 
             for (uint16_t wIdx : order)
@@ -121,18 +125,21 @@ static bool loadMrmMesh(
                 v.normal = zenPosToGL(wedge.normal.x, wedge.normal.y, wedge.normal.z);
                 v.uv     = glm::vec2(wedge.texture.x, 1.0f - wedge.texture.y);
 
-                outVerts.push_back(v);
+                data.verts.push_back(v);
             }
         }
+
+        if (!data.verts.empty())
+            outSubMeshes.push_back(std::move(data));
     }
 
-    if (outVerts.empty())
+    if (outSubMeshes.empty())
     {
         printf("[MRM] Pusty mesh po sparsowaniu: %s\n", mrmName.c_str());
         return false;
     }
 
-    printf("[LOAD MRM]   -> %zu wierzcholkow, %zu submeshy\n", outVerts.size(), mrm.sub_meshes.size());
+    printf("[LOAD MRM]   -> %zu submeshy\n", outSubMeshes.size());
     fflush(stdout);
 
     return true;
