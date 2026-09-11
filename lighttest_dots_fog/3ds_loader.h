@@ -61,7 +61,7 @@ public:
         outMesh.materialForFace.clear();
 
         uint32_t fileSize = static_cast<uint32_t>(getFileSize(file));
-        parseChunk(file, fileSize, outMesh, -1, 0);
+        parseChunk(file, fileSize, outMesh, -1, 0, 0);
 
         if (outMesh.vertices.empty())
             return false;
@@ -120,7 +120,8 @@ private:
         uint32_t endPos,
         Mesh3DS& mesh,
         int currentMaterial,
-        uint32_t vertexOffset)
+        uint32_t vertexOffset,
+        uint32_t faceBase)
     {
         while (static_cast<uint32_t>(file.tellg()) < endPos && file.good()) {
             uint32_t chunkStart = static_cast<uint32_t>(file.tellg());
@@ -144,7 +145,7 @@ private:
                 case 0x4100: // N_TRI_OBJECT
                 case 0xA200: // MAT_TEXMAP
                 {
-                    parseChunk(file, nextChunk, mesh, currentMaterial, vertexOffset);
+                    parseChunk(file, nextChunk, mesh, currentMaterial, vertexOffset, faceBase);
                     break;
                 }
 
@@ -152,14 +153,14 @@ private:
                 {
                     readString(file, nextChunk); // Odczytaj i pomijamy nazwę
                     uint32_t currentVertexOffset = static_cast<uint32_t>(mesh.vertices.size());
-                    parseChunk(file, nextChunk, mesh, currentMaterial, currentVertexOffset);
+                    parseChunk(file, nextChunk, mesh, currentMaterial, currentVertexOffset, faceBase);
                     break;
                 }
 
                 case 0xAFFF: // MATERIAL_BLOCK
                 {
                     int materialIndex = createMaterial(mesh);
-                    parseChunk(file, nextChunk, mesh, materialIndex, vertexOffset);
+                    parseChunk(file, nextChunk, mesh, materialIndex, vertexOffset, faceBase);
                     break;
                 }
 
@@ -225,13 +226,13 @@ private:
 
                     for (uint16_t i = 0; i < numFaces; ++i)
                     {
-                        mesh.faces[startFaceIdx + i].a = uint32_t(raw[i * 4 + 0]) + uint32_t(vertexOffset);
-                        mesh.faces[startFaceIdx + i].b = uint32_t(raw[i * 4 + 1]) + uint32_t(vertexOffset);
-                        mesh.faces[startFaceIdx + i].c = uint32_t(raw[i * 4 + 2]) + uint32_t(vertexOffset);
+                        mesh.faces[startFaceIdx + i].a = uint32_t(raw[i * 4 + 0]) + vertexOffset;
+                        mesh.faces[startFaceIdx + i].b = uint32_t(raw[i * 4 + 1]) + vertexOffset;
+                        mesh.faces[startFaceIdx + i].c = uint32_t(raw[i * 4 + 2]) + vertexOffset;
                     }
 
-                    // Parsuj pod-bloki FACE_ARRAY (np. FACE_MATERIAL 0x4130)
-                    parseChunk(file, nextChunk, mesh, currentMaterial, vertexOffset);
+                    // Podchunki (m.in. FACE_MATERIAL) musza znac baze indeksowania trojkatow TEGO obiektu
+                    parseChunk(file, nextChunk, mesh, currentMaterial, vertexOffset, static_cast<uint32_t>(startFaceIdx));
                     break;
                 }
 
@@ -243,14 +244,16 @@ private:
 
                     int materialIndex = findMaterial(mesh, materialName);
 
-                    if (materialIndex >= 0) {
-                        for (uint16_t i = 0; i < faceCount; ++i) {
+                    if (materialIndex >= 0)
+                    {
+                        for (uint16_t i = 0; i < faceCount; ++i)
+                        {
                             uint16_t faceIndex = 0;
                             file.read(reinterpret_cast<char*>(&faceIndex), sizeof(faceIndex));
 
-                            // Zgodność z offsetem obecnego obiektu
-                            size_t realFaceIdx = mesh.faces.size() > 0 ? (mesh.faces.size() - faceCount + i) : faceIndex;
-                            if (realFaceIdx < mesh.materialForFace.size()) {
+                            size_t realFaceIdx = faceBase + faceIndex; 
+                            if (realFaceIdx < mesh.materialForFace.size())
+                            {
                                 mesh.materialForFace[realFaceIdx] = static_cast<uint16_t>(materialIndex);
                             }
                         }
