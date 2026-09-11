@@ -409,9 +409,9 @@ static bool loadThreeDsSubMeshes(
         glm::vec2 uv[3] = { glm::vec2(0.0f), glm::vec2(0.0f), glm::vec2(0.0f) };
         if (!mesh.uvs.empty())
         {
-            if (face.a < mesh.uvs.size()) uv[0] = mesh.uvs[face.a];
-            if (face.b < mesh.uvs.size()) uv[1] = mesh.uvs[face.b];
-            if (face.c < mesh.uvs.size()) uv[2] = mesh.uvs[face.c];
+            if (face.a < mesh.uvs.size()) uv[0] = glm::vec2(mesh.uvs[face.a].x, 1.0f - mesh.uvs[face.a].y);
+            if (face.b < mesh.uvs.size()) uv[1] = glm::vec2(mesh.uvs[face.b].x, 1.0f - mesh.uvs[face.b].y);
+            if (face.c < mesh.uvs.size()) uv[2] = glm::vec2(mesh.uvs[face.c].x, 1.0f - mesh.uvs[face.c].y);
         }
 
         groupedVerts[matIdx].push_back({ p[0], normal, uv[0] });
@@ -877,7 +877,7 @@ int main(int argc, char** argv)
     auto t0 = std::chrono::high_resolution_clock::now();
     auto t1 = std::chrono::high_resolution_clock::now();
     auto t2 = std::chrono::high_resolution_clock::now();
-    auto t3 = std::chrono::high_resolution_clock::now();
+
     if(worldMode) //to jest false jeśli nie na świateł w pliku zen
     {
         worldSubMeshes = loadWorldSubMeshesFromZen(zenPath, g_texCache);
@@ -936,26 +936,14 @@ int main(int argc, char** argv)
 
     GLuint objectMarkerVao = makeVao(objectMarkerVerts);
 
-
     std::vector<size_t> visibleLightIndices;
     visibleLightIndices.reserve(worldLights.size());
 
     std::vector<Vertex> bboxVerts = buildUnitBBox();
     GLuint bboxVao = makeVao(bboxVerts);
 
-    // Zamiast generować wszystko na starcie, tworzymy wektory o odpowiednim rozmiarze, ale puste/nie zainicjalizowane
-    // std::vector<GLuint> fogVaoPerLight(worldLights.size(), 0);
-    // std::vector<size_t> fogCountPerLight(worldLights.size(), 0);
-    // std::vector<bool>   fogGeneratedPerLight(worldLights.size(), false);
     std::vector<FogBuffer> fogPerLight(worldLights.size());
 
-
-    t3 = std::chrono::high_resolution_clock::now();
-    printf("[LOG] Pominięto wstępne generowanie mgły – włączono tryb dynamiczny (leniwy).\n");
-
-    // t3 = std::chrono::high_resolution_clock::now();
-    // printf("[LOG] Czas generowania mgły: %.2f ms\n", 
-    //       std::chrono::duration<float, std::milli>(t3 - t2).count());
     glEnable(GL_PROGRAM_POINT_SIZE);
 
     TextRenderer text;
