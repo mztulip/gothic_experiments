@@ -281,14 +281,18 @@ static void walkVobs(
             obj.visualName =
                 vob->visual->name;
 
+            // printf("[DEBUG] visualname: %s vob->visual->type :%d\n\r", obj.visualName.c_str(),
+            //     vob->visual->type );
+
             if (vob->visual->type == zenkit::VisualType::MESH ||
-                vob->visual->type == zenkit::VisualType::MULTI_RESOLUTION_MESH)
+                vob->visual->type == zenkit::VisualType::MULTI_RESOLUTION_MESH ||
+                vob->visual->type == zenkit::VisualType::MODEL)
             {
                 std::string gothicDir = getGothicDir();
 
                 if (!gothicDir.empty())
                 {
-                    obj.meshPath = findMeshFile(gothicDir, obj.visualName); // moze byc puste - OK
+                    obj.meshPath = findMeshFile(gothicDir, obj.visualName); 
                 }
 
                 // meshLoaded = "ten VOB POWINIEN miec mesh", niezaleznie od zrodla (3ds czy MRM).

@@ -37,6 +37,7 @@
 #include "vfs_loader.hpp"
 #include "frustrum.hpp"  
 #include "mrm_loader.hpp"
+#include "mdl_loader.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -83,7 +84,7 @@ static bool g_showVobBBoxes = false;
 
 static TextureCache g_texCache;
 enum class MeshSource { ThreeDS, MRM };
-static MeshSource g_meshSource = MeshSource::ThreeDS;
+static MeshSource g_meshSource = MeshSource::MRM;
 
 
 
@@ -499,7 +500,22 @@ static bool createVobMeshGL(LoadedVob& vob)
     glm::mat4 localTransform(1.f);
     bool ok = false;
 
-    if (g_meshSource == MeshSource::MRM)
+    std::string lowerVisual = vob.visualName;
+    std::transform(lowerVisual.begin(), lowerVisual.end(), lowerVisual.begin(),
+                [](unsigned char c){ return std::tolower(c); });
+
+    bool isSkeletal = lowerVisual.size() > 4 &&
+        (lowerVisual.substr(lowerVisual.size() - 4) == ".mds" ||
+        lowerVisual.substr(lowerVisual.size() - 4) == ".asc");
+
+
+    if (isSkeletal)
+    {
+        std::string gothicDir = getGothicDir();
+        auto& vfs = gothicVfs(gothicDir);
+        ok = loadMdlMesh(vfs, gothicDir, vob.visualName, subData);
+    }
+    else if (g_meshSource == MeshSource::MRM)
     {
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
@@ -510,6 +526,9 @@ static bool createVobMeshGL(LoadedVob& vob)
         ok = loadThreeDsSubMeshes(vob.meshPath, vob.visualName, subData, localTransform);
         vob.meshLocalTransform = localTransform;
     }
+
+    std::string gothicDir = getGothicDir();
+    auto& vfs = gothicVfs(gothicDir);
 
     if (!ok)
     {
