@@ -62,7 +62,7 @@ Występują w oficjalnych paczkach VFS (`Anims.vdf`, `Anims_Addon.vdf`) w katalo
 | :--- | :--- | :--- | :--- | :---: |
 | **`.ASC`** | 3D Studio Max ASCII Scene | Tekstowy | Surowe źródło 3D: siatka (mesh), szkielet lub klatki animacji. | ❌ Nie |
 | **`.MDS`** | Model Script | Tekstowy | Skrypt przypisujący animacje do stanu gry, zdarzenia (SFX/PFX) oraz powiązane pliki 3D. | ❌ Rzadko |
-| **`.MSB`** | Model Script Binary | Binarny | Skompilowany skrypt `.MDS`. Zapewnia szybki odczyt logiki animacji przez silnik. |  Tak |
+| **`.MSB`** | Model Script Binary | Binarny | Skompilowany skrypt `.MDS`. Zapewnia szybki odczyt logiki animacji przez silnik informacje o plikach z meshami, oraz odnośniki do plikow ASC dla poszczególnych animacji|  Tak |
 | **`.MDH`** | Model Data Header | Binarny | Skompilowany szkielet. Zawiera nazwy, hierarchię i rotacje lokalne kości. |  Tak |
 | **`.MAN`** | Model Animation Binary | Binarny | Skompilowane klatki kluczowe pozycji i rotacji dla konkretnego ruchu (np. bieg, atak). |  Tak |
 | **`.MDM`** | Model Mesh | Binarny | Siatka modelu połączona ze szkieletem (*skinned mesh*). Często tworzona w pamięci RAM. | ⚠️ Opcjonalnie |

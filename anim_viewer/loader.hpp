@@ -179,8 +179,8 @@ inline LoadedCharacter load_character_smart(
     std::string base_name = to_upper(fs::path(model_name).stem().string());
 
     // 1. MSB / MDS
-    std::string msb_name = base_name + ".MSB";
-    std::string mds_name = base_name + ".MDS";
+    std::string msb_name = base_name + ".MSB"; //Informacje o animacjach i refencje do plików ASC(MDM i MDH)
+    std::string mds_name = base_name + ".MDS"; //tych plików wogóle nie widzę w vfs, ale są w wypakowanym _Work
 
     const zenkit::VfsNode* script_node = find_vfs(vfs.root(), msb_name);
     if (!script_node)
@@ -192,7 +192,7 @@ inline LoadedCharacter load_character_smart(
         return result;
     }
 
-    std::cout << "[INFO] Ładowanie skryptu: " << script_node->name() << '\n';
+    std::cout << "[INFO] Ładowanie skryptu MSB: " << script_node->name() << '\n';
     try
     {
         auto reader = script_node->open_read();
@@ -207,6 +207,7 @@ inline LoadedCharacter load_character_smart(
     }
 
     // 2. MDH
+    // Z tego pliku ładujemy szkielet rucuhu
     std::string mdh_name = base_name + ".MDH";
     const zenkit::VfsNode* mdh_node = find_vfs(vfs.root(), mdh_name);
 
@@ -226,6 +227,7 @@ inline LoadedCharacter load_character_smart(
     }
 
     // 3. MDM lub .3DS
+    //czyli to zawiera siatke mesh modelu i odnośnik do pliku z teksturą 
     std::vector<std::string> mdm_candidates;
 
     // Przetwarzamy wpisy siatek z pliku MSB/MDS (np. KRO_BODY.ASC -> KRO_BODY.MDM / KRO_BODY.3DS)

@@ -19,6 +19,7 @@
 #include "structs.hpp"
 #include "loader.hpp"
 #include "camera.hpp"
+#include "axis_gizmo.hpp"
 
 const char* vertex_shader_src = R"(
 #version 330 core
@@ -112,6 +113,7 @@ std::vector<RenderMesh> create_body_meshes(const zenkit::ModelMesh& model_mesh)
         positions.reserve(mesh.positions.size());
 
         for (const auto& p : mesh.positions)
+        //KOnwersja na opengl 
             positions.push_back(glm::vec3(p.x, p.z, -p.y));
 
         for (const auto& sub : mesh.sub_meshes)
@@ -182,70 +184,88 @@ std::vector<RenderMesh> create_body_meshes(const zenkit::ModelMesh& model_mesh)
 std::vector<glm::vec3> get_animated_bone_positions(
     const zenkit::ModelHierarchy& hierarchy,
     const zenkit::ModelAnimation& anim,
-    int frame)
+    int frame,
+    const std::string& skeleton_name)
 {
     size_t num_nodes = hierarchy.nodes.size();
-    std::vector<glm::mat4> global_transforms(num_nodes, glm::mat4(1.0f));
-    std::vector<glm::vec3> positions(num_nodes, glm::vec3(0.0f));
+    std::vector<glm::mat4> global(num_nodes, glm::mat4(1.0f));
+    std::vector<glm::vec3> out(num_nodes, glm::vec3(0.0f));
 
-    if (num_nodes == 0) return positions;
+    if (num_nodes == 0)
+        return out;
 
     uint32_t frame_idx = std::clamp(frame, 0, (int)anim.frame_count - 1);
 
-    // Macierz korekcyjna dla kości bazowej (obrót o -90 stopni wokół osi X)
-    // Zrównuje rotację domyślną Root Bone Gothica z siatką
-    // glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-    // glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-// glm::mat4 root_correction = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-glm::mat4 root_correction =(glm::mat4(1.0f));
+    // stała korekcja root bone – tym razem naprawdę używana
+    // glm::mat4 root_fix =
+    //     glm::rotate(glm::mat4(1.0f),
+    //                 glm::radians(-90.0f),   // kluczowa zmiana: -90 zamiast +90
+    //                 glm::vec3(1, 0, 0));
+
+    //Iterujemy po kościach
     for (size_t i = 0; i < num_nodes; ++i)
     {
+        //POjedyncza kość
         const auto& node = hierarchy.nodes[i];
 
-        glm::mat4 local_transform(
+        // [R R R Tx]
+        // [R R R Ty]
+        // [R R R Tz]
+        // [0 0 0  1]
+        //To jest macierz tranformacji dla kosci gdzie R- rotacja, T- transformacja
+        glm::mat4 local(
             node.transform[0][0], node.transform[0][1], node.transform[0][2], node.transform[0][3],
             node.transform[1][0], node.transform[1][1], node.transform[1][2], node.transform[1][3],
             node.transform[2][0], node.transform[2][1], node.transform[2][2], node.transform[2][3],
             node.transform[3][0], node.transform[3][1], node.transform[3][2], node.transform[3][3]
         );
 
-        size_t sample_idx = frame_idx * num_nodes + i;
-        if (sample_idx < anim.samples.size())
+        //Animacja = tablica [frame][bone] → (position, rotation)
+
+        //dla każdej ramki animaji mamy po kolei wymienione sample przeksztalcenia dla kości
+        size_t sidx = frame_idx * num_nodes + i;
+        //anim.samples.size() to ilosc klatek animacji
+    //każdy elemente to 
+        //     struct Sample {
+        //     vec3 position;
+        //     quat rotation;
+        // }
+
+        if (sidx < anim.samples.size())
         {
-            const auto& sample = anim.samples[sample_idx];
+            //to jest pozycja i rotacja tej kości w tej klatce animacji.
+            const auto& s = anim.samples[sidx];
 
-            glm::quat rot(sample.rotation.w, sample.rotation.x, sample.rotation.y, sample.rotation.z);
-            glm::mat4 rot_matrix = glm::mat4_cast(rot);
+            glm::quat q(s.rotation.w, s.rotation.x, s.rotation.y, s.rotation.z);
+            glm::mat4 R = glm::mat4_cast(q); //macierz rotacji dla tej klatki
 
-            glm::mat4 trans_matrix = glm::translate(glm::mat4(1.0f), 
-                glm::vec3(sample.position.x, sample.position.y, sample.position.z));
+            glm::mat4 T = glm::translate(glm::mat4(1.0f),
+                glm::vec3(s.position.x, s.position.y, s.position.z)); //przesuniecie dla tej klatki
 
-            local_transform = trans_matrix * rot_matrix;
+            local = T * R; //pelna transformacja kosci
         }
 
         if (node.parent_index != 0xFFFF && node.parent_index < num_nodes)
-        {
-            global_transforms[i] = global_transforms[node.parent_index] * local_transform;
-        }
+            global[i] = global[node.parent_index] * local;
         else
-        {
-            // Dla kości nadrzędnej (Root) dokładasz korekcję obrotu
-            global_transforms[i] = root_correction * local_transform;
-        }
+            // global[i] = root_fix * local;   // root dostaje korekcję
+        global[i] = local;   // root dostaje korekcję
 
-        glm::vec4 raw_pos = global_transforms[i][3];
 
-        // Zamiana osi na przestrzeń OpenGL: (X, Z, -Y)
-        positions[i] = glm::vec3(raw_pos.x, raw_pos.z, -raw_pos.y);
+        glm::vec4 p = global[i][3];
+        out[i] = glm::vec3(p.x, p.z, -p.y);
     }
 
-    return positions;
+    return out;
 }
 
+
 struct SkeletonRenderData {
-    GLuint vao{0}, vbo{0};
+    GLuint vao{0};
+    GLuint vbo{0};
     GLsizei vertex_count{0};
 };
+
 
 SkeletonRenderData update_skeleton_buffer(
     const zenkit::ModelHierarchy& hierarchy,
@@ -283,6 +303,9 @@ SkeletonRenderData update_skeleton_buffer(
     return old_data;
 }
 
+
+
+
 int main(int argc, char** argv) 
 {
     if (!glfwInit()) return 1;
@@ -298,6 +321,10 @@ int main(int argc, char** argv)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    FontMesh Xmesh = load_font_mesh("Roboto-Regular.ttf", 'X', 0.01f);
+    FontMesh Ymesh = load_font_mesh("Roboto-Regular.ttf", 'Y', 0.01f);
+    FontMesh Zmesh = load_font_mesh("Roboto-Regular.ttf", 'Z', 0.01f);
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -308,7 +335,7 @@ int main(int argc, char** argv)
     g_app_ptr = &app;
     glfwSetScrollCallback(window, scroll_callback);
 
-    std::string model_name = "ALLIGATOR";
+    std::string model_name = "DEMON";
     std::string gothic_dir = "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II";
 
     if (argc > 1) model_name = argv[1];
@@ -344,6 +371,16 @@ int main(int argc, char** argv)
     int current_frame = 0;
     bool render_wireframe = false;
     bool show_skeleton = true;
+
+    if (!character.animations.empty())
+    {
+        std::cout<<"Animacje character.animations obecne załądowane z pliku MAN"<<std::endl;
+    }
+    else 
+    {
+        std::cout<<"Brak animacji postaci"<<std::endl;
+    }
+    
 
     while (!glfwWindowShouldClose(window)) 
     {
@@ -384,10 +421,15 @@ int main(int argc, char** argv)
         std::vector<glm::vec3> anim_pos;
         if (!character.animations.empty())
         {
-            anim_pos = get_animated_bone_positions(character.hierarchy, character.animations[0], current_frame);
+            anim_pos = get_animated_bone_positions(
+            character.hierarchy,
+            character.animations[0],
+            current_frame,
+            character.script.skeleton.name);
         }
         else
         {
+
             // Budowanie hierarchii bez animacji (pozycja bazowa)
             size_t num_nodes = character.hierarchy.nodes.size();
             std::vector<glm::mat4> globals(num_nodes, glm::mat4(1.0f));
@@ -467,9 +509,28 @@ int main(int argc, char** argv)
             glBindVertexArray(0);
         }
 
+
+        glm::vec3 mesh_origin = app.model_center;
+int root = 0;
+for (int i = 0; i < character.hierarchy.nodes.size(); ++i)
+{
+    if (character.hierarchy.nodes[i].parent_index == 0xFFFF)
+    {
+        root = i;
+        break;
+    }
+}
+glm::vec3 skeleton_origin = anim_pos[root];
+
+
+        draw_origins(shader_program, mesh_origin, skeleton_origin, view, proj);
+
+
+        draw_axis_labels_imgui(view, proj, 150.0f);
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
+        draw_axes(shader_program, 150.0f);
+  
         glfwSwapBuffers(window);
     }
 
