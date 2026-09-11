@@ -95,6 +95,8 @@ struct LoadedVob
     //Narazie tego nie używam bo po tej transformacji obiekty mam w powietrzu
     glm::mat4 meshLocalTransform{1.f};
 
+    bool usesNativeAxis = false; // true dla MRM i MDL (zenPosToGL), false dla surowego 3ds
+
 };
 
 

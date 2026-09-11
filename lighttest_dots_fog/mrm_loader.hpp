@@ -119,7 +119,7 @@ static bool loadMrmMesh(
                 Vertex v;
                 v.pos    = zenPosToGL(p.x, p.y, p.z);
                 v.normal = zenPosToGL(wedge.normal.x, wedge.normal.y, wedge.normal.z);
-                v.uv     = glm::vec2(wedge.texture.x, 1.0f - wedge.texture.y);
+                v.uv     = glm::vec2(wedge.texture.x, wedge.texture.y);
 
                 data.verts.push_back(v);
             }

@@ -74,7 +74,7 @@ static int   g_formulaMode    = 1; // 0=linia, 1=obecna
 static int   g_lightcorrection = 1; // 0=brak, 1=obecna
 static int   g_tonemap        = 1; // wlaczony domyslnie - tak jak w OpenGothic
 static float g_lightIntensity = 1.f;
-static float g_ambientStrength = 0.08f;
+static float g_ambientStrength = 0.2f;
 static bool  g_fogEnabled    = false;
 static float g_fogDensity    = 1.0f;
 static bool  g_texturesEnabled = true;
@@ -514,17 +514,20 @@ static bool createVobMeshGL(LoadedVob& vob)
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
         ok = loadMdlMesh(vfs, gothicDir, vob.visualName, subData);
+        vob.usesNativeAxis = true;
     }
     else if (g_meshSource == MeshSource::MRM)
     {
         std::string gothicDir = getGothicDir();
         auto& vfs = gothicVfs(gothicDir);
         ok = loadMrmMesh(vfs, gothicDir, vob.visualName, subData);
+          vob.usesNativeAxis = true;
     }
     else
     {
         ok = loadThreeDsSubMeshes(vob.meshPath, vob.visualName, subData, localTransform);
         vob.meshLocalTransform = localTransform;
+        vob.usesNativeAxis = false;
     }
 
     std::string gothicDir = getGothicDir();
@@ -648,7 +651,7 @@ static void drawVobsToGBuffer(
             continue;
 
         glm::mat4 model =
-            (g_meshSource == MeshSource::MRM)
+            obj.usesNativeAxis
                 ? glm::translate(glm::mat4(1.f), obj.pos) * obj.rotation
                 : glm::translate(glm::mat4(1.f), obj.pos) * obj.rotation * getVobBaseRotation();
 
@@ -728,14 +731,24 @@ int main(int argc, char** argv)
     std::string zenPath;
     TextureSource texSource = TextureSource::GothicOnly;
 
-    for (int i = 1; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) 
+    {
         std::string a = argv[i];
-        if (a == "--mydata-only" || a == "--only-mydata") {
-        texSource = TextureSource::MyDataOnly;
-        } else if (a == "--gothic-only" || a == "--only-gothic") {
-        texSource = TextureSource::GothicOnly;
-        } else if (zenPath.empty()) {
-        zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
+        if (a == "--mydata-only" || a == "--only-mydata") 
+        {
+            texSource = TextureSource::MyDataOnly;
+        } else if (a == "--gothic-only" || a == "--only-gothic") 
+        {
+            texSource = TextureSource::GothicOnly;
+        } else if (a == "--3ds") 
+        {
+            g_meshSource = MeshSource::ThreeDS;
+        } else if (a == "--mrm") 
+        {
+            g_meshSource = MeshSource::MRM;
+        } else if (zenPath.empty()) 
+        {
+            zenPath = a; // pierwszy "zwykly" argument to sciezka do .ZEN
         }
     }
 
