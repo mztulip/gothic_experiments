@@ -49,6 +49,7 @@ in vec3 FragPos;
 
 uniform vec3 objectColor;
 uniform bool useLighting;
+uniform bool opaqueMode;      // NOWY uniform
 
 void main() {
     if (!useLighting) {
@@ -64,7 +65,8 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * objectColor;
 
-    FragColor = vec4(ambient + diffuse, 0.6);
+    float alpha = opaqueMode ? 1.0 : 0.6;
+    FragColor = vec4(ambient + diffuse, alpha);
 }
 )";
 
@@ -322,6 +324,7 @@ int main(int argc, char** argv)
     glfwSetScrollCallback(window, scroll_callback);
 
     std::string model_name = "DEMON";
+
     std::string gothic_dir = "/home/mz/.wine/drive_c/Program Files (x86)/JoWood/Gothic II";
 
     if (argc > 1) model_name = argv[1];
@@ -342,6 +345,7 @@ int main(int argc, char** argv)
     int last_frame = -1;
     bool render_wireframe = false;
     bool show_skeleton = true;
+    bool opaque_mode = false; 
 
     while (!glfwWindowShouldClose(window)) 
     {
@@ -363,6 +367,7 @@ int main(int argc, char** argv)
 
         ImGui::Checkbox("Tryb Siatki (Wireframe)", &render_wireframe);
         ImGui::Checkbox("Pokaz Kosci Szkieletu", &show_skeleton);
+        ImGui::Checkbox("Wylacz przezroczystosc", &opaque_mode); 
         ImGui::Separator();
 
         if (!character.animations.empty())
@@ -457,8 +462,9 @@ int main(int argc, char** argv)
             glPolygonMode(GL_FRONT_AND_BACK, render_wireframe ? GL_LINE : GL_FILL);
             glUniform3f(glGetUniformLocation(shader_program, "objectColor"), 0.6f, 0.6f, 0.6f);
             glUniform1i(glGetUniformLocation(shader_program, "useLighting"), true);
+            glUniform1i(glGetUniformLocation(shader_program, "opaqueMode"), opaque_mode);
 
-            glDepthMask(GL_FALSE);
+             glDepthMask(opaque_mode ? GL_TRUE : GL_FALSE); 
             for (const auto& m : body_meshes)
             {
                 glBindVertexArray(m.vao);
